@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dropify</title>
+  <meta name="theme-color" content="#121212">
+  <link rel="manifest" href="manifest.json">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #121212; color: #fff; font-family: -apple-system, sans-serif; max-width: 600px; margin: 0 auto; }
+    header { background: #121212; padding: 16px; position: sticky; top: 0; border-bottom: 1px solid #333; display: flex; justify-content: space-between; align-items: center; }
+    header h1 { font-size: 20px; font-weight: 700; color: #1db954; }
+    #last-updated { font-size: 11px; color: #666; }
+    .filters { padding: 12px 16px; display: flex; gap: 8px; background: #121212; position: sticky; top: 57px; }
+    .filter-pill { font-size: 12px; padding: 4px 12px; border-radius: 20px; border: 1px solid #444; color: #b3b3b3; background: transparent; cursor: pointer; }
+    .filter-pill.active { background: #1db954; border-color: #1db954; color: #000; font-weight: 600; }
+    #banner { margin: 12px 16px; background: #1db954; border-radius: 8px; padding: 10px 14px; font-size: 13px; color: #000; font-weight: 600; display: none; }
+    #releases { padding: 0 0 80px; }
+    .section-label { font-size: 11px; color: #b3b3b3; text-transform: uppercase; letter-spacing: 0.08em; padding: 12px 16px 6px; }
+    .release-item { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid #222; cursor: pointer; text-decoration: none; color: inherit; }
+    .release-item:hover { background: #1a1a1a; }
+    .cover { width: 52px; height: 52px; border-radius: 4px; object-fit: cover; flex-shrink: 0; background: #333; }
+    .release-info { flex: 1; min-width: 0; }
+    .release-artist { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .release-title { font-size: 13px; color: #b3b3b3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+    .release-meta { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+    .badge { font-size: 10px; padding: 2px 6px; border-radius: 3px; font-weight: 600; }
+    .badge-album { background: #1a3a4a; color: #5bb3d0; }
+    .badge-single { background: #3a1a3a; color: #c070c0; }
+    .badge-ep { background: #3a3a1a; color: #c0b040; }
+    .release-date { font-size: 11px; color: #666; }
+    .new-dot { width: 7px; height: 7px; border-radius: 50%; background: #1db954; flex-shrink: 0; }
+    #loading { text-align: center; padding: 60px 16px; color: #666; }
+    #empty { text-align: center; padding: 60px 16px; color: #666; display: none; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Dropify</h1>
+  <span id="last-updated"></span>
+</header>
+
+<div class="filters">
+  <button class="filter-pill active" onclick="setFilter('all')">Alle</button>
+  <button class="filter-pill" onclick="setFilter('album')">Alben</button>
+  <button class="filter-pill" onclick="setFilter('single')">Singles</button>
+  <button class="filter-pill" onclick="setFilter('ep')">EPs</button>
+</div>
+
+<div id="banner"></div>
+<div id="loading">Releases werden geladen…</div>
+<div id="empty">Keine neuen Releases in den letzten 7 Tagen.</div>
+<div id="releases"></div>
+
+<script>
+  const WORKER_URL = "https://dropify-worker.summer-truth-edd2.workers.dev/";
+  const LAST_SEEN_KEY = "dropify_last_seen";
+  const FILTER_KEY = "dropify_filter";
+
+  let allReleases = [];
+  let currentFilter = localStorage.getItem(FILTER_KEY) || "all";
+
+  document.querySelectorAll(".filter-pill").forEach(pill => {
+    if (pill.textContent.toLowerCase().includes(currentFilter === "all" ? "alle" : currentFilter)) {
+      pill.classList.add("active");
+    } else {
+      pill.classList.remove("active");
+    }
+  });
+
+  function setFilter(filter) {
+    currentFilter = filter;
+    localStorage.setItem(FILTER_KEY, filter);
+    document.querySelectorAll(".filter-pill").forEach(p => p.classList.remove("active"));
+    event.target.classList.add("active");
+    renderReleases();
+  }
+
+  function formatDate(dateStr) {
+    const date = new Date(dateStr);
+    const today = new Date();
+    const diffDays = Math.floor((today - date) / (1000 * 60 * 60 * 24));
+    if (diffDays === 0) return "heute";
+    if (diffDays === 1) return "gestern";
+    return date.toLocaleDateString("de-DE", { day: "2-digit", month: "short" });
+  }
+
+  function isNew(dateStr) {
+    const lastSeen = localStorage.getItem(LAST_SEEN_KEY);
+    if (!lastSeen) return true;
+    return new Date(dateStr) > new Date(lastSeen);
+  }
+
+  function groupByDate(releases) {
+    const today = new Date();
+    const groups = { "Heute": [], "Diese Woche": [] };
+    releases.forEach(r => {
+      const date = new Date(r.date);
+      const diffDays = Math.floor((today - date) / (1000 * 60 * 60 * 24));
+      if (diffDays === 0) groups["Heute"].push(r);
+      else groups["Diese Woche"].push(r);
+    });
+    return groups;
+  }
+
+  function renderReleases() {
+    const filtered = currentFilter === "all"
+      ? allReleases
+      : allReleases.filter(r => r.type === currentFilter);
+
+    const container = document.getElementById("releases");
+    const empty = document.getElementById("empty");
+
+    if (filtered.length === 0) {
+      container.innerHTML = "";
+      empty.style.display = "block";
+      return;
+    }
+    empty.style.display = "none";
+
+    const groups = groupByDate(filtered);
+    let html = "";
+    for (const [label, items] of Object.entries(groups)) {
+      if (items.length === 0) continue;
+      html += `<div class="section-label">${label}</div>`;
+      items.forEach(r => {
+        const badgeClass = r.type === "album" ? "badge-album" : r.type === "single" ? "badge-single" : "badge-ep";
+        const badgeLabel = r.type === "album" ? "Album" : r.type === "single" ? "Single" : "EP";
+        const dot = isNew(r.date) ? `<div class="new-dot"></div>` : "";
+        html += `
+          <a class="release-item" href="${r.url}" target="_blank">
+            <img class="cover" src="${r.cover}" alt="${r.title}" loading="lazy">
+            <div class="release-info">
+              <div class="release-artist">${r.artist}</div>
+              <div class="release-title">${r.title}</div>
+              <div class="release-meta">
+                <span class="badge ${badgeClass}">${badgeLabel}</span>
+                <span class="release-date">${formatDate(r.date)}</span>
+              </div>
+            </div>
+            ${dot}
+          </a>`;
+      });
+    }
+    container.innerHTML = html;
+  }
+
+  async function loadReleases() {
+    try {
+      const tokenRes = await fetch(WORKER_URL);
+      const { access_token } = await tokenRes.json();
+
+      let artists = [];
+      let url = "https://api.spotify.com/v1/me/following?type=artist&limit=50";
+      while (url) {
+        const res = await fetch(url, { headers: { "Authorization": `Bearer ${access_token}` } });
+        const data = await res.json();
+        if (!data.artists || !data.artists.items) break;
+        artists = artists.concat(data.artists.items);
+        url = data.artists.next;
+      }
+
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+      const albumRequests = artists.map(artist =>
+        fetch(`https://api.spotify.com/v1/artists/${artist.id}/albums?include_groups=album,single,ep&limit=5&market=DE`, {
+          headers: { "Authorization": `Bearer ${access_token}` }
+        }).then(r => r.json()).then(data => ({ artist, data }))
+      );
+
+      const results = await Promise.all(albumRequests);
+      const releases = [];
+
+      results.forEach(({ artist, data }) => {
+        if (!data.items) return;
+        data.items.forEach(album => {
+          const releaseDate = new Date(album.release_date);
+          if (releaseDate >= sevenDaysAgo) {
+            releases.push({
+              artist: artist.name,
+              title: album.name,
+              type: album.album_type,
+              date: album.release_date,
+              cover: album.images[1]?.url || album.images[0]?.url,
+              url: album.external_urls.spotify
+            });
+          }
+        });
+      });
+
+      releases.sort((a, b) => new Date(b.date) - new Date(a.date));
+      allReleases = releases;
+
+      const lastSeen = localStorage.getItem(LAST_SEEN_KEY);
+      const newCount = releases.filter(r => !lastSeen || new Date(r.date) > new Date(lastSeen)).length;
+
+      if (newCount > 0) {
+        const banner = document.getElementById("banner");
+        banner.textContent = `${newCount} neue Release${newCount > 1 ? "s" : ""} seit deinem letzten Besuch`;
+        banner.style.display = "block";
+      }
+
+      const now = new Date();
+      document.getElementById("last-updated").textContent = `Stand: ${now.toLocaleDateString("de-DE", { day: "2-digit", month: "short" })}`;
+
+      document.getElementById("loading").style.display = "none";
+      renderReleases();
+
+      localStorage.setItem(LAST_SEEN_KEY, new Date().toISOString());
+
+    } catch (e) {
+      document.getElementById("loading").textContent = "Fehler beim Laden.";
+    }
+  }
+
+  loadReleases();
+</script>
+</body>
+</html>
