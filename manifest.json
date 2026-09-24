@@ -1,0 +1,16 @@
+{
+  "name": "Dropify",
+  "short_name": "Dropify",
+  "description": "Neue Releases deiner gefolgten Künstler",
+  "start_url": "/dropify/",
+  "display": "standalone",
+  "background_color": "#121212",
+  "theme_color": "#121212",
+  "icons": [
+    {
+      "src": "https://raw.githubusercontent.com/gitarrenteufel/dropify/main/icon.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    }
+  ]
+}
