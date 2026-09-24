@@ -165,15 +165,19 @@
       const sevenDaysAgo = new Date();
       sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
-      const albumRequests = artists.map(artist =>
-        fetch(`https://api.spotify.com/v1/artists/${artist.id}/albums?include_groups=album,single,ep&limit=5&market=DE`, {
-          headers: { "Authorization": `Bearer ${access_token}` }
-        }).then(r => r.json()).then(data => ({ artist, data }))
-      );
+      const results = [];
+      for (let i = 0; i < artists.length; i += 10) {
+        const chunk = artists.slice(i, i + 10);
+        const chunkResults = await Promise.all(chunk.map(artist =>
+          fetch(`https://api.spotify.com/v1/artists/${artist.id}/albums?include_groups=album,single,ep&limit=5&market=DE`, {
+            headers: { "Authorization": `Bearer ${access_token}` }
+          }).then(r => r.json()).then(data => ({ artist, data }))
+        ));
+        results.push(...chunkResults);
+        await new Promise(resolve => setTimeout(resolve, 200));
+      }
 
-      const results = await Promise.all(albumRequests);
       const releases = [];
-
       results.forEach(({ artist, data }) => {
         if (!data.items) return;
         data.items.forEach(album => {
