@@ -1,0 +1,188 @@
+name: Fetch Spotify Releases
+
+on:
+  schedule:
+    - cron: '0 5 * * 5'  # Freitags 05:00 UTC = 06:00 MEZ / 07:00 MESZ
+  workflow_dispatch:      # Manuell auslösbar zum Testen
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Fetch releases and write to KV
+        env:
+          SPOTIFY_CLIENT_ID: ${{ secrets.SPOTIFY_CLIENT_ID }}
+          SPOTIFY_CLIENT_SECRET: ${{ secrets.SPOTIFY_CLIENT_SECRET }}
+          SPOTIFY_REFRESH_TOKEN: ${{ secrets.SPOTIFY_REFRESH_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_KV_NAMESPACE_ID: ${{ secrets.CF_KV_NAMESPACE_ID }}
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+        run: |
+          node << 'EOF'
+          const https = require('https');
+
+          function request(options, body = null) {
+            return new Promise((resolve, reject) => {
+              const req = https.request(options, (res) => {
+                let data = '';
+                res.on('data', chunk => data += chunk);
+                res.on('end', () => {
+                  try { resolve({ status: res.statusCode, body: JSON.parse(data) }); }
+                  catch { resolve({ status: res.statusCode, body: data }); }
+                });
+              });
+              req.on('error', reject);
+              if (body) req.write(body);
+              req.end();
+            });
+          }
+
+          function sleep(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+          }
+
+          // Gibt den Freitag der Woche eines Datums zurück (YYYY-MM-DD)
+          function getWeekFriday(dateStr) {
+            const date = new Date(dateStr);
+            const day = date.getUTCDay(); // 0=So, 5=Fr
+            const diff = (day >= 5) ? (day - 5) : (day + 2);
+            const friday = new Date(date);
+            friday.setUTCDate(date.getUTCDate() - diff);
+            return friday.toISOString().split('T')[0];
+          }
+
+          async function main() {
+            // 1. Spotify Access Token holen
+            const credentials = Buffer.from(
+              `${process.env.SPOTIFY_CLIENT_ID}:${process.env.SPOTIFY_CLIENT_SECRET}`
+            ).toString('base64');
+
+            const tokenRes = await request({
+              hostname: 'accounts.spotify.com',
+              path: '/api/token',
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'Authorization': `Basic ${credentials}`
+              }
+            }, `grant_type=refresh_token&refresh_token=${process.env.SPOTIFY_REFRESH_TOKEN}`);
+
+            const token = tokenRes.body.access_token;
+            if (!token) {
+              console.error('Kein Access Token erhalten:', tokenRes.body);
+              process.exit(1);
+            }
+            console.log('Token erhalten.');
+
+            // 2. Alle gefolgten Künstler holen
+            let artists = [];
+            let url = '/v1/me/following?type=artist&limit=50';
+            while (url) {
+              const res = await request({
+                hostname: 'api.spotify.com',
+                path: url,
+                method: 'GET',
+                headers: { 'Authorization': `Bearer ${token}` }
+              });
+              if (!res.body.artists || !res.body.artists.items) break;
+              artists = artists.concat(res.body.artists.items);
+              const next = res.body.artists.next;
+              url = next ? new URL(next).pathname + new URL(next).search : null;
+            }
+            console.log(`${artists.length} Künstler gefunden.`);
+
+            // 3. Releases der letzten 7 Tage holen (in 5er-Batches)
+            const sevenDaysAgo = new Date();
+            sevenDaysAgo.setUTCDate(sevenDaysAgo.getUTCDate() - 7);
+
+            const newReleases = [];
+            for (let i = 0; i < artists.length; i += 5) {
+              const chunk = artists.slice(i, i + 5);
+              await Promise.all(chunk.map(async (artist) => {
+                const res = await request({
+                  hostname: 'api.spotify.com',
+                  path: `/v1/artists/${artist.id}/albums?include_groups=album,single,ep&limit=5&market=DE`,
+                  method: 'GET',
+                  headers: { 'Authorization': `Bearer ${token}` }
+                });
+                if (!res.body.items) return;
+                for (const album of res.body.items) {
+                  const releaseDate = new Date(album.release_date);
+                  if (releaseDate >= sevenDaysAgo) {
+                    newReleases.push({
+                      id: album.id,
+                      artist: artist.name,
+                      artistId: artist.id,
+                      title: album.name,
+                      type: album.album_type,
+                      date: album.release_date,
+                      weekFriday: getWeekFriday(album.release_date),
+                      cover: album.images[1]?.url || album.images[0]?.url,
+                      url: album.external_urls.spotify
+                    });
+                  }
+                }
+              }));
+              if (i + 5 < artists.length) await sleep(500);
+            }
+            console.log(`${newReleases.length} neue Releases gefunden.`);
+
+            // 4. Bestehende KV-Daten laden und mergen
+            const existingRes = await request({
+              hostname: 'api.cloudflare.com',
+              path: `/client/v4/accounts/${process.env.CF_ACCOUNT_ID}/storage/kv/namespaces/${process.env.CF_KV_NAMESPACE_ID}/values/all_releases`,
+              method: 'GET',
+              headers: {
+                'Authorization': `Bearer ${process.env.CF_API_TOKEN}`
+              }
+            });
+
+            let existingReleases = [];
+            if (existingRes.status === 200 && Array.isArray(existingRes.body)) {
+              existingReleases = existingRes.body;
+            }
+
+            // Merge: neue hinzufügen, Duplikate (gleiche album.id) überspringen
+            const existingIds = new Set(existingReleases.map(r => r.id));
+            const merged = [...existingReleases];
+            for (const r of newReleases) {
+              if (!existingIds.has(r.id)) {
+                merged.push(r);
+              }
+            }
+            merged.sort((a, b) => new Date(b.date) - new Date(a.date));
+            console.log(`${merged.length} Releases gesamt nach Merge.`);
+
+            // 5. In Cloudflare KV schreiben
+            const kvRes = await request({
+              hostname: 'api.cloudflare.com',
+              path: `/client/v4/accounts/${process.env.CF_ACCOUNT_ID}/storage/kv/namespaces/${process.env.CF_KV_NAMESPACE_ID}/values/all_releases`,
+              method: 'PUT',
+              headers: {
+                'Authorization': `Bearer ${process.env.CF_API_TOKEN}`,
+                'Content-Type': 'application/json'
+              }
+            }, JSON.stringify(merged));
+
+            // Letztes Update-Datum separat speichern
+            await request({
+              hostname: 'api.cloudflare.com',
+              path: `/client/v4/accounts/${process.env.CF_ACCOUNT_ID}/storage/kv/namespaces/${process.env.CF_KV_NAMESPACE_ID}/values/last_updated`,
+              method: 'PUT',
+              headers: {
+                'Authorization': `Bearer ${process.env.CF_API_TOKEN}`,
+                'Content-Type': 'text/plain'
+              }
+            }, new Date().toISOString());
+
+            if (kvRes.body.success) {
+              console.log('KV erfolgreich geschrieben.');
+            } else {
+              console.error('KV-Fehler:', JSON.stringify(kvRes.body));
+              process.exit(1);
+            }
+          }
+
+          main().catch(err => { console.error(err); process.exit(1); });
+          EOF
