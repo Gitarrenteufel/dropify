@@ -65,6 +65,7 @@
 
 <div class="tabs">
   <div class="tab active" onclick="setTab('new')">Neu</div>
+  <div class="tab" onclick="setTab('upcoming')">Kommend</div>
   <div class="tab" onclick="setTab('archive')">Archiv</div>
 </div>
 
@@ -98,48 +99,46 @@
   });
 
   // Tab initialisieren
-  if (currentTab === "archive") {
-    document.querySelectorAll(".tab").forEach((t, i) => t.classList.toggle("active", i === 1));
+  document.querySelectorAll(".tab").forEach((t, i) => {
+    t.classList.toggle("active",
+      (currentTab === "new" && i === 0) ||
+      (currentTab === "upcoming" && i === 1) ||
+      (currentTab === "archive" && i === 2)
+    );
+  });
+
+  function getToday() {
+    return new Date().toISOString().split('T')[0];
   }
 
-  // Gibt den Freitag der Release-Woche zurück
-  function getWeekFriday(dateStr) {
-    const date = new Date(dateStr + "T12:00:00Z");
-    const day = date.getUTCDay(); // 0=So, 5=Fr
+  function getCurrentWeekFriday() {
+    const today = new Date();
+    const day = today.getUTCDay();
     const diff = (day >= 5) ? (day - 5) : (day + 2);
-    const friday = new Date(date);
-    friday.setUTCDate(date.getUTCDate() - diff);
+    const friday = new Date(today);
+    friday.setUTCDate(today.getUTCDate() - diff);
     return friday.toISOString().split('T')[0];
   }
 
-  // Gibt den Donnerstag der selben Woche zurück
   function getWeekThursday(fridayStr) {
-    const friday = new Date(fridayStr + "T12:00:00Z");
+    const friday = new Date(fridayStr + 'T12:00:00Z');
     const thursday = new Date(friday);
     thursday.setUTCDate(friday.getUTCDate() + 6);
     return thursday.toISOString().split('T')[0];
   }
 
-  // Aktuellen Freitag der laufenden Woche ermitteln
-  function getCurrentWeekFriday() {
-    const today = new Date();
-    const todayStr = today.toISOString().split('T')[0];
-    return getWeekFriday(todayStr);
-  }
-
   function formatDateShort(dateStr) {
-    const date = new Date(dateStr + "T12:00:00Z");
-    return date.toLocaleDateString("de-DE", { day: "2-digit", month: "short", timeZone: "UTC" });
+    const date = new Date(dateStr + 'T12:00:00Z');
+    return date.toLocaleDateString('de-DE', { day: '2-digit', month: 'short', timeZone: 'UTC' });
   }
 
   function formatDate(dateStr) {
-    const date = new Date(dateStr + "T12:00:00Z");
-    const today = new Date();
-    const todayStr = today.toISOString().split('T')[0];
-    if (dateStr === todayStr) return "heute";
-    const yesterdayDate = new Date(today);
-    yesterdayDate.setDate(today.getDate() - 1);
-    if (dateStr === yesterdayDate.toISOString().split('T')[0]) return "gestern";
+    const today = getToday();
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayStr = yesterday.toISOString().split('T')[0];
+    if (dateStr === today) return 'heute';
+    if (dateStr === yesterdayStr) return 'gestern';
     return formatDateShort(dateStr);
   }
 
@@ -150,9 +149,9 @@
   }
 
   function releaseHTML(r) {
-    const badgeClass = r.type === "album" ? "badge-album" : r.type === "single" ? "badge-single" : "badge-ep";
-    const badgeLabel = r.type === "album" ? "Album" : r.type === "single" ? "Single" : "EP";
-    const dot = isNew(r.date) ? `<div class="new-dot"></div>` : "";
+    const badgeClass = r.type === 'album' ? 'badge-album' : r.type === 'single' ? 'badge-single' : 'badge-ep';
+    const badgeLabel = r.type === 'album' ? 'Album' : r.type === 'single' ? 'Single' : 'EP';
+    const dot = isNew(r.date) ? '<div class="new-dot"></div>' : '';
     return `
       <a class="release-item" href="${r.url}" target="_blank">
         <img class="cover" src="${r.cover}" alt="${r.title}" loading="lazy">
@@ -171,8 +170,12 @@
   function setTab(tab) {
     currentTab = tab;
     localStorage.setItem(TAB_KEY, tab);
-    document.querySelectorAll(".tab").forEach((t, i) => {
-      t.classList.toggle("active", (tab === "new" && i === 0) || (tab === "archive" && i === 1));
+    document.querySelectorAll('.tab').forEach((t, i) => {
+      t.classList.toggle('active',
+        (tab === 'new' && i === 0) ||
+        (tab === 'upcoming' && i === 1) ||
+        (tab === 'archive' && i === 2)
+      );
     });
     render();
   }
@@ -180,105 +183,142 @@
   function setFilter(filter) {
     currentFilter = filter;
     localStorage.setItem(FILTER_KEY, filter);
-    document.querySelectorAll(".filter-pill").forEach(p => p.classList.remove("active"));
-    event.target.classList.add("active");
+    document.querySelectorAll('.filter-pill').forEach(p => p.classList.remove('active'));
+    event.target.classList.add('active');
     render();
   }
 
   function render() {
-    const filtered = currentFilter === "all"
+    const today = getToday();
+    const currentFriday = getCurrentWeekFriday();
+    const currentThursday = getWeekThursday(currentFriday);
+
+    const filtered = currentFilter === 'all'
       ? allReleases
       : allReleases.filter(r => r.type === currentFilter);
 
-    const content = document.getElementById("content");
-    const empty = document.getElementById("empty");
-    const banner = document.getElementById("banner");
+    const content = document.getElementById('content');
+    const empty = document.getElementById('empty');
+    const banner = document.getElementById('banner');
 
-    if (currentTab === "new") {
-      banner.style.display = "block"; // Banner nur im Neu-Tab
-      const currentFriday = getCurrentWeekFriday();
-      const currentWeek = filtered.filter(r => (r.weekFriday || getWeekFriday(r.date)) === currentFriday);
+    // Releases aufteilen
+    const newReleases = filtered.filter(r => r.date >= currentFriday && r.date <= currentThursday);
+    const upcomingReleases = filtered.filter(r => r.date > currentThursday).sort((a, b) => new Date(a.date) - new Date(b.date));
+    const archiveReleases = filtered.filter(r => r.date < currentFriday);
 
-      if (currentWeek.length === 0) {
-        content.innerHTML = "";
-        empty.style.display = "block";
-        empty.textContent = "Keine neuen Releases diese Woche.";
+    if (currentTab === 'new') {
+      banner.style.display = 'block';
+      if (newReleases.length === 0) {
+        content.innerHTML = '';
+        empty.style.display = 'block';
+        empty.textContent = 'Keine neuen Releases diese Woche.';
         return;
       }
-      empty.style.display = "none";
+      empty.style.display = 'none';
 
-      // Gruppierung: Heute / Diese Woche
-      const today = new Date().toISOString().split('T')[0];
-      const todayItems = currentWeek.filter(r => r.date === today);
-      const weekItems = currentWeek.filter(r => r.date !== today);
+      const todayItems = newReleases.filter(r => r.date === today);
+      const weekItems = newReleases.filter(r => r.date !== today);
 
-      let html = "";
+      let html = '';
       if (todayItems.length > 0) {
-        html += `<div class="section-label">Heute</div>`;
+        html += '<div class="section-label">Heute</div>';
         todayItems.forEach(r => { html += releaseHTML(r); });
       }
       if (weekItems.length > 0) {
-        html += `<div class="section-label">Diese Woche</div>`;
+        html += '<div class="section-label">Diese Woche</div>';
         weekItems.forEach(r => { html += releaseHTML(r); });
       }
       content.innerHTML = html;
 
-    } else {
-      // Archiv-Tab
-      banner.style.display = "none";
-      const currentFriday = getCurrentWeekFriday();
-      const archiveReleases = filtered.filter(r => (r.weekFriday || getWeekFriday(r.date)) !== currentFriday);
-
-      if (archiveReleases.length === 0) {
-        content.innerHTML = "";
-        empty.style.display = "block";
-        empty.textContent = "Noch keine archivierten Releases.";
+    } else if (currentTab === 'upcoming') {
+      banner.style.display = 'none';
+      if (upcomingReleases.length === 0) {
+        content.innerHTML = '';
+        empty.style.display = 'block';
+        empty.textContent = 'Keine kommenden Releases bekannt.';
         return;
       }
-      empty.style.display = "none";
+      empty.style.display = 'none';
 
       // Nach Wochen gruppieren
       const weeks = {};
+      upcomingReleases.forEach(r => {
+        const friday = r.weekFriday;
+        if (!weeks[friday]) weeks[friday] = [];
+        weeks[friday].push(r);
+      });
+
+      const sortedFridays = Object.keys(weeks).sort((a, b) => new Date(a) - new Date(b));
+      let html = '';
+      sortedFridays.forEach((friday, idx) => {
+        const thursday = getWeekThursday(friday);
+        const label = `${formatDateShort(friday)} – ${formatDateShort(thursday)}`;
+        const count = weeks[friday].length;
+        const openClass = idx === 0 ? 'open' : '';
+        html += `
+          <div class="archive-week">
+            <div class="archive-week-header" onclick="toggleWeek('upcoming-${friday}')">
+              <span class="archive-week-title">${label}</span>
+              <span style="display:flex;align-items:center;gap:8px">
+                <span class="archive-week-count">${count} Release${count !== 1 ? 's' : ''}</span>
+                <span class="archive-week-chevron ${openClass}" id="chevron-upcoming-${friday}">▼</span>
+              </span>
+            </div>
+            <div class="archive-week-items ${openClass}" id="upcoming-${friday}">
+              ${weeks[friday].map(releaseHTML).join('')}
+            </div>
+          </div>`;
+      });
+      content.innerHTML = html;
+
+    } else {
+      // Archiv
+      banner.style.display = 'none';
+      if (archiveReleases.length === 0) {
+        content.innerHTML = '';
+        empty.style.display = 'block';
+        empty.textContent = 'Noch keine archivierten Releases.';
+        return;
+      }
+      empty.style.display = 'none';
+
+      const weeks = {};
       archiveReleases.forEach(r => {
-        const friday = r.weekFriday || getWeekFriday(r.date);
+        const friday = r.weekFriday;
         if (!weeks[friday]) weeks[friday] = [];
         weeks[friday].push(r);
       });
 
       const sortedFridays = Object.keys(weeks).sort((a, b) => new Date(b) - new Date(a));
-
-      let html = "";
+      let html = '';
       sortedFridays.forEach((friday, idx) => {
         const thursday = getWeekThursday(friday);
         const label = `${formatDateShort(friday)} – ${formatDateShort(thursday)}`;
         const count = weeks[friday].length;
-        const isFirst = idx === 0;
-        const openClass = isFirst ? "open" : "";
-
+        const openClass = idx === 0 ? 'open' : '';
         html += `
           <div class="archive-week">
-            <div class="archive-week-header" onclick="toggleWeek('week-${friday}')">
+            <div class="archive-week-header" onclick="toggleWeek('archive-${friday}')">
               <span class="archive-week-title">${label}</span>
               <span style="display:flex;align-items:center;gap:8px">
-                <span class="archive-week-count">${count} Release${count !== 1 ? "s" : ""}</span>
-                <span class="archive-week-chevron ${openClass}" id="chevron-week-${friday}">▼</span>
+                <span class="archive-week-count">${count} Release${count !== 1 ? 's' : ''}</span>
+                <span class="archive-week-chevron ${openClass}" id="chevron-archive-${friday}">▼</span>
               </span>
             </div>
-            <div class="archive-week-items ${openClass}" id="week-${friday}">
-              ${weeks[friday].map(releaseHTML).join("")}
+            <div class="archive-week-items ${openClass}" id="archive-${friday}">
+              ${weeks[friday].map(releaseHTML).join('')}
             </div>
           </div>`;
       });
-
       content.innerHTML = html;
     }
   }
 
   function toggleWeek(id) {
     const items = document.getElementById(id);
-    const chevron = document.getElementById("chevron-" + id);
-    items.classList.toggle("open");
-    chevron.classList.toggle("open");
+    const chevron = document.getElementById('chevron-' + id);
+    items.classList.toggle('open');
+    chevron.classList.toggle('open');
   }
 
   async function loadReleases() {
@@ -290,26 +330,32 @@
 
       if (data.updated) {
         const updated = new Date(data.updated);
-        document.getElementById("last-updated").textContent =
-          `Stand: ${updated.toLocaleDateString("de-DE", { day: "2-digit", month: "short" })}`;
+        document.getElementById('last-updated').textContent =
+          `Stand: ${updated.toLocaleDateString('de-DE', { day: '2-digit', month: 'short' })}`;
       }
 
-      // Banner: neue Releases seit letztem Besuch
+      // Banner: neue Releases seit letztem Besuch (nur aktuelle Woche)
+      const currentFriday = getCurrentWeekFriday();
+      const currentThursday = getWeekThursday(currentFriday);
       const lastSeen = localStorage.getItem(LAST_SEEN_KEY);
-      const newCount = allReleases.filter(r => !lastSeen || new Date(r.date) > new Date(lastSeen)).length;
-      const banner = document.getElementById("banner");
+      const newCount = allReleases.filter(r =>
+        r.date >= currentFriday && r.date <= currentThursday &&
+        (!lastSeen || new Date(r.date) > new Date(lastSeen))
+      ).length;
+
+      const banner = document.getElementById('banner');
       if (newCount > 0) {
-        banner.textContent = `${newCount} neue Release${newCount > 1 ? "s" : ""} seit deinem letzten Besuch`;
-        banner.style.display = currentTab === "new" ? "block" : "none";
+        banner.textContent = `${newCount} neue Release${newCount > 1 ? 's' : ''} seit deinem letzten Besuch`;
+        banner.style.display = currentTab === 'new' ? 'block' : 'none';
       }
 
-      document.getElementById("loading").style.display = "none";
+      document.getElementById('loading').style.display = 'none';
       render();
 
       localStorage.setItem(LAST_SEEN_KEY, new Date().toISOString());
 
     } catch (e) {
-      document.getElementById("loading").textContent = "Fehler beim Laden.";
+      document.getElementById('loading').textContent = 'Fehler beim Laden.';
     }
   }
 
