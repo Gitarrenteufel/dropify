@@ -187,9 +187,9 @@ jobs:
             console.log(`${artists.length} Künstler mit Deezer-Mapping geladen.`);
 
             const sevenDaysAgo = new Date();
-            sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+            sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 21);
             sevenDaysAgo.setHours(0, 0, 0, 0);
-            console.log(`Suche Releases seit: ${sevenDaysAgo.toISOString().split('T')[0]}`);
+            console.log(`Suche Releases seit: ${sevenDaysAgo.toISOString().split('T')[0]}`); // 21 Tage Lookback
 
             const newReleases = [];
             for (const artist of artists) {
