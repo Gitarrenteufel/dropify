@@ -12,6 +12,7 @@
 
     header { background: #121212; padding: 16px; position: sticky; top: 0; z-index: 10; border-bottom: 1px solid #333; display: flex; justify-content: space-between; align-items: center; }
     header h1 { font-size: 20px; font-weight: 700; color: #1db954; }
+    #app-version { font-size: 11px; font-weight: 400; color: #666; margin-left: 4px; }
     #last-updated { font-size: 11px; color: #666; }
 
     .tabs { display: flex; background: #121212; position: sticky; top: 57px; z-index: 9; border-bottom: 1px solid #333; }
@@ -49,6 +50,7 @@
     .badge-album { background: #1a3a4a; color: #5bb3d0; }
     .badge-single { background: #3a1a3a; color: #c070c0; }
     .badge-ep { background: #3a3a1a; color: #c0b040; }
+    .badge-other { background: #2a2a2a; color: #b3b3b3; }
     .release-date { font-size: 11px; color: #666; }
     .new-dot { width: 7px; height: 7px; border-radius: 50%; background: #1db954; flex-shrink: 0; }
 
@@ -59,7 +61,7 @@
 <body>
 
 <header>
-  <h1>Dropify</h1>
+  <h1>Dropify <span id="app-version"></span></h1>
   <span id="last-updated"></span>
 </header>
 
@@ -82,6 +84,7 @@
 <div id="content"></div>
 
 <script>
+  const APP_VERSION = "1.1";
   const WORKER_URL = "https://dropify-worker.summer-truth-edd2.workers.dev/";
   const LAST_SEEN_KEY = "dropify_last_seen";
   const FILTER_KEY = "dropify_filter";
@@ -106,17 +109,22 @@
     );
   });
 
+  // Lokales Datum (nicht UTC) als YYYY-MM-DD
+  function localISO(d) {
+    const p = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  }
+
   function getToday() {
-    return new Date().toISOString().split('T')[0];
+    return localISO(new Date());
   }
 
   function getCurrentWeekFriday() {
     const today = new Date();
-    const day = today.getUTCDay();
+    const day = today.getDay();
     const diff = (day >= 5) ? (day - 5) : (day + 2);
-    const friday = new Date(today);
-    friday.setUTCDate(today.getUTCDate() - diff);
-    return friday.toISOString().split('T')[0];
+    const friday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - diff);
+    return localISO(friday);
   }
 
   function getWeekThursday(fridayStr) {
@@ -135,7 +143,7 @@
     const today = getToday();
     const yesterday = new Date();
     yesterday.setDate(yesterday.getDate() - 1);
-    const yesterdayStr = yesterday.toISOString().split('T')[0];
+    const yesterdayStr = localISO(yesterday);
     if (dateStr === today) return 'heute';
     if (dateStr === yesterdayStr) return 'gestern';
     return formatDateShort(dateStr);
@@ -156,8 +164,14 @@
   }
 
   function releaseHTML(r, showDot = true) {
-    const badgeClass = r.type === 'album' ? 'badge-album' : r.type === 'single' ? 'badge-single' : 'badge-ep';
-    const badgeLabel = r.type === 'album' ? 'Album' : r.type === 'single' ? 'Single' : 'EP';
+    const BADGES = {
+      album: ['badge-album', 'Album'],
+      single: ['badge-single', 'Single'],
+      ep: ['badge-ep', 'EP'],
+      compile: ['badge-other', 'Compilation'],
+      compilation: ['badge-other', 'Compilation']
+    };
+    const [badgeClass, badgeLabel] = BADGES[r.type] || ['badge-other', r.type ? r.type.charAt(0).toUpperCase() + r.type.slice(1) : 'Release'];
     const dot = showDot && isNew(r.date) ? '<div class="new-dot"></div>' : '';
     const fallback = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAAACXBIWXMAAAsTAAALEwEAmpwYAAAAyklEQVR4nO2YwQqDMBBEX6IH//8ji6ciop3dJA==';
     return `
@@ -372,6 +386,7 @@
     }
   }, { passive: true });
 
+  document.getElementById('app-version').textContent = 'v' + APP_VERSION;
   loadReleases();
 </script>
 </body>
