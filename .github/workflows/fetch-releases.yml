@@ -214,7 +214,7 @@ jobs:
                     date: album.release_date,
                     weekFriday: getWeekFriday(album.release_date),
                     cover: album.cover_medium,
-                    url: album.link
+                    url: `https://open.spotify.com/search/${encodeURIComponent(album.title + " " + artist.spotifyName)}`
                   });
                 }
               }
