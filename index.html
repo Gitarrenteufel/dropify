@@ -24,6 +24,12 @@
 
     #banner { margin: 12px 16px; background: #1db954; border-radius: 8px; padding: 10px 14px; font-size: 13px; color: #000; font-weight: 600; display: none; }
 
+    #playlist-section { padding: 12px 16px; display: none; }
+    #playlist-btn { width: 100%; padding: 12px; background: #1db954; border: none; border-radius: 8px; color: #000; font-size: 14px; font-weight: 700; cursor: pointer; }
+    #playlist-btn:hover { background: #1ed760; }
+    #playlist-btn:disabled { background: #444; color: #888; cursor: default; }
+    #playlist-status { margin-top: 8px; font-size: 12px; color: #b3b3b3; text-align: center; display: none; }
+
     #content { padding: 0 0 80px; }
 
     .section-label { font-size: 11px; color: #b3b3b3; text-transform: uppercase; letter-spacing: 0.08em; padding: 12px 16px 6px; }
@@ -59,7 +65,7 @@
 <body>
 
 <header>
-  <h1>Dropify</h1>
+  <h1>Dropify <span style="font-size:11px;color:#666;font-weight:400;">v1.1</span></h1>
   <span id="last-updated"></span>
 </header>
 
@@ -77,6 +83,10 @@
 </div>
 
 <div id="banner"></div>
+<div id="playlist-section">
+  <button id="playlist-btn" onclick="createPlaylist()">🎵 Playlist erstellen</button>
+  <div id="playlist-status"></div>
+</div>
 <div id="loading">Releases werden geladen…</div>
 <div id="empty">Keine Releases vorhanden.</div>
 <div id="content"></div>
@@ -86,8 +96,13 @@
   const LAST_SEEN_KEY = "dropify_last_seen";
   const FILTER_KEY = "dropify_filter";
   const TAB_KEY = "dropify_tab";
+  const TOKEN_KEY = "dropify_sp_token";
+  const TOKEN_EXPIRY_KEY = "dropify_sp_expiry";
+  const VERIFIER_KEY = "dropify_pkce_verifier";
+  const PLAYLIST_PREFIX = "dropify_playlist_";
 
   let allReleases = [];
+  let spotifyClientId = null;
   let currentFilter = localStorage.getItem(FILTER_KEY) || "all";
   let currentTab = localStorage.getItem(TAB_KEY) || "new";
 
@@ -106,6 +121,182 @@
       (currentTab === "archive" && i === 2)
     );
   });
+
+  // PKCE Hilfsfunktionen
+  function generateRandom(length) {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
+    return Array.from(crypto.getRandomValues(new Uint8Array(length)))
+      .map(b => chars[b % chars.length]).join('');
+  }
+
+  async function generateCodeChallenge(verifier) {
+    const data = new TextEncoder().encode(verifier);
+    const digest = await crypto.subtle.digest('SHA-256', data);
+    return btoa(String.fromCharCode(...new Uint8Array(digest)))
+      .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+  }
+
+  async function startSpotifyAuth() {
+    const verifier = generateRandom(64);
+    localStorage.setItem(VERIFIER_KEY, verifier);
+    const challenge = await generateCodeChallenge(verifier);
+    const params = new URLSearchParams({
+      client_id: spotifyClientId,
+      response_type: 'code',
+      redirect_uri: window.location.origin + window.location.pathname,
+      scope: 'playlist-modify-private',
+      code_challenge_method: 'S256',
+      code_challenge: challenge,
+      state: 'playlist'
+    });
+    window.location.href = 'https://accounts.spotify.com/authorize?' + params.toString();
+  }
+
+  async function handleOAuthCallback() {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get('code');
+    const state = params.get('state');
+    if (!code || state !== 'playlist') return;
+
+    const verifier = localStorage.getItem(VERIFIER_KEY);
+    if (!verifier) return;
+
+    const res = await fetch('https://accounts.spotify.com/api/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: spotifyClientId,
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: window.location.origin + window.location.pathname,
+        code_verifier: verifier
+      })
+    });
+    const data = await res.json();
+    if (data.access_token) {
+      localStorage.setItem(TOKEN_KEY, data.access_token);
+      localStorage.setItem(TOKEN_EXPIRY_KEY, String(Date.now() + data.expires_in * 1000));
+      localStorage.removeItem(VERIFIER_KEY);
+      window.history.replaceState({}, document.title, window.location.pathname);
+      setTimeout(createPlaylist, 300);
+    }
+  }
+
+  function getValidToken() {
+    const token = localStorage.getItem(TOKEN_KEY);
+    const expiry = localStorage.getItem(TOKEN_EXPIRY_KEY);
+    if (token && expiry && Date.now() < parseInt(expiry)) return token;
+    return null;
+  }
+
+  async function createPlaylist() {
+    const btn = document.getElementById('playlist-btn');
+    const status = document.getElementById('playlist-status');
+    btn.disabled = true;
+    status.style.display = 'block';
+
+    let token = getValidToken();
+    if (!token) {
+      status.textContent = 'Weiterleitung zu Spotify…';
+      localStorage.setItem('dropify_playlist_pending', '1');
+      await startSpotifyAuth();
+      return;
+    }
+
+    try {
+      // Nutzer holen
+      status.textContent = 'Verbinde mit Spotify…';
+      const meRes = await fetch('https://api.spotify.com/v1/me', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const me = await meRes.json();
+      const userId = me.id;
+
+      // Aktuelle Woche
+      const friday = getCurrentWeekFriday();
+      const thursday = getWeekThursday(friday);
+      const playlistKey = PLAYLIST_PREFIX + friday;
+      const playlistName = `Dropify · ${formatDateShort(friday)} – ${formatDateShort(thursday)}`;
+      const weekReleases = allReleases.filter(r => r.date >= friday && r.date <= thursday);
+
+      if (weekReleases.length === 0) {
+        status.textContent = 'Keine Releases diese Woche.';
+        btn.disabled = false;
+        return;
+      }
+
+      // Ersten Track pro Release suchen
+      status.textContent = 'Suche Tracks…';
+      const trackUris = [];
+      for (const release of weekReleases) {
+        const q = encodeURIComponent(`${release.title} ${release.artist}`);
+        const searchRes = await fetch(`https://api.spotify.com/v1/search?q=${q}&type=album&limit=1`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        const searchData = await searchRes.json();
+        const album = searchData.albums?.items?.[0];
+        if (!album) continue;
+        const tracksRes = await fetch(`https://api.spotify.com/v1/albums/${album.id}/tracks?limit=1`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        const tracksData = await tracksRes.json();
+        const firstTrack = tracksData.items?.[0];
+        if (firstTrack) trackUris.push(firstTrack.uri);
+      }
+
+      if (trackUris.length === 0) {
+        status.textContent = 'Keine Tracks auf Spotify gefunden.';
+        btn.disabled = false;
+        return;
+      }
+
+      // Playlist erstellen oder aktualisieren
+      let playlistId = localStorage.getItem(playlistKey);
+      if (!playlistId) {
+        status.textContent = 'Erstelle Playlist…';
+        const createRes = await fetch(`https://api.spotify.com/v1/users/${userId}/playlists`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: playlistName, public: false, description: 'Erstellt von Dropify' })
+        });
+        const playlist = await createRes.json();
+        playlistId = playlist.id;
+        localStorage.setItem(playlistKey, playlistId);
+      } else {
+        status.textContent = 'Prüfe bestehende Tracks…';
+        const existRes = await fetch(`https://api.spotify.com/v1/playlists/${playlistId}/tracks?fields=items(track(uri))&limit=50`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        const existData = await existRes.json();
+        const existingUris = new Set((existData.items || []).map(i => i.track?.uri).filter(Boolean));
+        const newUris = trackUris.filter(u => !existingUris.has(u));
+        if (newUris.length === 0) {
+          status.textContent = '✅ Playlist bereits aktuell.';
+          btn.textContent = '✅ Playlist aktualisieren';
+          btn.disabled = false;
+          return;
+        }
+        trackUris.length = 0;
+        trackUris.push(...newUris);
+      }
+
+      // Tracks hinzufügen
+      status.textContent = 'Füge Tracks hinzu…';
+      await fetch(`https://api.spotify.com/v1/playlists/${playlistId}/tracks`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ uris: trackUris })
+      });
+
+      status.innerHTML = `✅ Fertig! <a href="https://open.spotify.com/playlist/${playlistId}" target="_blank" style="color:#1db954;">In Spotify öffnen →</a>`;
+      btn.textContent = '✅ Playlist aktualisieren';
+      btn.disabled = false;
+
+    } catch(e) {
+      status.textContent = 'Fehler: ' + e.message;
+      btn.disabled = false;
+    }
+  }
 
   function getToday() {
     return new Date().toISOString().split('T')[0];
@@ -152,9 +343,10 @@
     const badgeClass = r.type === 'album' ? 'badge-album' : r.type === 'single' ? 'badge-single' : 'badge-ep';
     const badgeLabel = r.type === 'album' ? 'Album' : r.type === 'single' ? 'Single' : 'EP';
     const dot = showDot && isNew(r.date) ? '<div class="new-dot"></div>' : '';
+    const fallback = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAAACXBIWXMAAAsTAAALEwEAmpwYAAAAyklEQVR4nO2YwQqDMBBEX6IH//8ji6ciop3dJA==';
     return `
       <a class="release-item" href="${r.url}" target="_blank">
-        <img class="cover" src="${r.cover}" alt="${r.title}" loading="lazy">
+        <img class="cover" src="${r.cover}" alt="${r.title}" loading="lazy" onerror="this.onerror=null;this.src='${fallback}'">
         <div class="release-info">
           <div class="release-artist">${r.artist}</div>
           <div class="release-title">${r.title}</div>
@@ -200,14 +392,19 @@
     const content = document.getElementById('content');
     const empty = document.getElementById('empty');
     const banner = document.getElementById('banner');
+    const playlistSection = document.getElementById('playlist-section');
+    const playlistBtn = document.getElementById('playlist-btn');
 
-    // Releases aufteilen
     const newReleases = filtered.filter(r => r.date >= currentFriday && r.date <= currentThursday);
     const upcomingReleases = filtered.filter(r => r.date > currentThursday).sort((a, b) => new Date(a.date) - new Date(b.date));
     const archiveReleases = filtered.filter(r => r.date < currentFriday);
 
     if (currentTab === 'new') {
       banner.style.display = 'block';
+      playlistSection.style.display = newReleases.length > 0 ? 'block' : 'none';
+      const playlistKey = PLAYLIST_PREFIX + currentFriday;
+      playlistBtn.textContent = localStorage.getItem(playlistKey) ? '✅ Playlist aktualisieren' : '🎵 Playlist erstellen';
+
       if (newReleases.length === 0) {
         content.innerHTML = '';
         empty.style.display = 'block';
@@ -218,7 +415,6 @@
 
       const todayItems = newReleases.filter(r => r.date === today);
       const weekItems = newReleases.filter(r => r.date !== today);
-
       let html = '';
       if (todayItems.length > 0) {
         html += '<div class="section-label">Heute</div>';
@@ -232,6 +428,7 @@
 
     } else if (currentTab === 'upcoming') {
       banner.style.display = 'none';
+      playlistSection.style.display = 'none';
       if (upcomingReleases.length === 0) {
         content.innerHTML = '';
         empty.style.display = 'block';
@@ -239,15 +436,12 @@
         return;
       }
       empty.style.display = 'none';
-
-      // Nach Wochen gruppieren
       const weeks = {};
       upcomingReleases.forEach(r => {
         const friday = r.weekFriday;
         if (!weeks[friday]) weeks[friday] = [];
         weeks[friday].push(r);
       });
-
       const sortedFridays = Object.keys(weeks).sort((a, b) => new Date(a) - new Date(b));
       let html = '';
       sortedFridays.forEach((friday, idx) => {
@@ -272,8 +466,8 @@
       content.innerHTML = html;
 
     } else {
-      // Archiv
       banner.style.display = 'none';
+      playlistSection.style.display = 'none';
       if (archiveReleases.length === 0) {
         content.innerHTML = '';
         empty.style.display = 'block';
@@ -281,14 +475,12 @@
         return;
       }
       empty.style.display = 'none';
-
       const weeks = {};
       archiveReleases.forEach(r => {
         const friday = r.weekFriday;
         if (!weeks[friday]) weeks[friday] = [];
         weeks[friday].push(r);
       });
-
       const sortedFridays = Object.keys(weeks).sort((a, b) => new Date(b) - new Date(a));
       let html = '';
       sortedFridays.forEach((friday, idx) => {
@@ -327,6 +519,7 @@
       const data = await res.json();
 
       allReleases = data.releases || [];
+      spotifyClientId = data.clientId || null;
 
       if (data.updated) {
         const updated = new Date(data.updated);
@@ -334,7 +527,6 @@
           `Stand: ${updated.toLocaleDateString('de-DE', { day: '2-digit', month: 'short' })}`;
       }
 
-      // Banner: neue Releases seit letztem Besuch (nur aktuelle Woche)
       const currentFriday = getCurrentWeekFriday();
       const currentThursday = getWeekThursday(currentFriday);
       const lastSeen = localStorage.getItem(LAST_SEEN_KEY);
@@ -350,8 +542,11 @@
       }
 
       document.getElementById('loading').style.display = 'none';
-      render();
 
+      // OAuth Callback verarbeiten
+      await handleOAuthCallback();
+
+      render();
       localStorage.setItem(LAST_SEEN_KEY, new Date().toISOString());
 
     } catch (e) {
@@ -359,26 +554,49 @@
     }
   }
 
+  async function handleOAuthCallback() {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get('code');
+    const state = params.get('state');
+    if (!code || state !== 'playlist' || !spotifyClientId) return;
 
-  // Wischfunktion für Tab-Navigation
-  let touchStartX = 0;
-  let touchEndX = 0;
-  const tabs = ['new', 'upcoming', 'archive'];
+    const verifier = localStorage.getItem(VERIFIER_KEY);
+    if (!verifier) return;
 
-  document.addEventListener('touchstart', e => {
-    touchStartX = e.changedTouches[0].screenX;
-  }, { passive: true });
-
-  document.addEventListener('touchend', e => {
-    touchEndX = e.changedTouches[0].screenX;
-    const diff = touchStartX - touchEndX;
-    if (Math.abs(diff) > 50) {
-      const currentIndex = tabs.indexOf(currentTab);
-      if (diff > 0 && currentIndex < tabs.length - 1) {
-        setTab(tabs[currentIndex + 1]);
-      } else if (diff < 0 && currentIndex > 0) {
-        setTab(tabs[currentIndex - 1]);
+    const res = await fetch('https://accounts.spotify.com/api/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: spotifyClientId,
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: window.location.origin + window.location.pathname,
+        code_verifier: verifier
+      })
+    });
+    const data = await res.json();
+    if (data.access_token) {
+      localStorage.setItem(TOKEN_KEY, data.access_token);
+      localStorage.setItem(TOKEN_EXPIRY_KEY, String(Date.now() + data.expires_in * 1000));
+      localStorage.removeItem(VERIFIER_KEY);
+      window.history.replaceState({}, document.title, window.location.pathname);
+      if (localStorage.getItem('dropify_playlist_pending')) {
+        localStorage.removeItem('dropify_playlist_pending');
+        setTimeout(createPlaylist, 300);
       }
+    }
+  }
+
+  // Wischfunktion
+  let touchStartX = 0;
+  const tabOrder = ['new', 'upcoming', 'archive'];
+  document.addEventListener('touchstart', e => { touchStartX = e.changedTouches[0].screenX; }, { passive: true });
+  document.addEventListener('touchend', e => {
+    const diff = touchStartX - e.changedTouches[0].screenX;
+    if (Math.abs(diff) > 50) {
+      const idx = tabOrder.indexOf(currentTab);
+      if (diff > 0 && idx < tabOrder.length - 1) setTab(tabOrder[idx + 1]);
+      else if (diff < 0 && idx > 0) setTab(tabOrder[idx - 1]);
     }
   }, { passive: true });
 
