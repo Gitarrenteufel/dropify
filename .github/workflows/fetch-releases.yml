@@ -177,6 +177,8 @@ jobs:
           CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
           CF_KV_NAMESPACE_ID: ${{ secrets.CF_KV_NAMESPACE_ID }}
           CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CALLMEBOT_PHONE: ${{ secrets.CALLMEBOT_PHONE }}
+          CALLMEBOT_APIKEY: ${{ secrets.CALLMEBOT_APIKEY }}
         run: |
           node << 'EOF'
           const https = require('https');
@@ -272,11 +274,13 @@ jobs:
             // Frische Deezer-Daten überschreiben bestehende Einträge (Datum, Cover, Typ etc.)
             const byId = new Map(existingReleases.map(r => [r.id, r]));
             let updated = 0, added = 0;
+            const addedList = [];
             for (const r of newReleases) {
               if (byId.has(r.id)) {
                 if (JSON.stringify(byId.get(r.id)) !== JSON.stringify(r)) updated++;
               } else {
                 added++;
+                addedList.push(r);
               }
               byId.set(r.id, r);
             }
@@ -310,6 +314,40 @@ jobs:
             } else {
               console.error('KV-Fehler:', JSON.stringify(kvRes.body));
               process.exit(1);
+            }
+
+            // WhatsApp-Benachrichtigung via CallMeBot (v1.3)
+            const cmbPhone = process.env.CALLMEBOT_PHONE;
+            const cmbKey = process.env.CALLMEBOT_APIKEY;
+            if (addedList.length > 0 && cmbPhone && cmbKey) {
+              try {
+                const n = addedList.length;
+                const maxLines = 8;
+                const lines = addedList.slice(0, maxLines).map(r => `${r.artist} - ${r.title}`);
+                if (n > maxLines) lines.push(`... und ${n - maxLines} weitere`);
+                const text = [
+                  `Dropify: ${n} ${n === 1 ? 'neuer Release' : 'neue Releases'}`,
+                  '',
+                  ...lines,
+                  '',
+                  'https://gitarrenteufel.github.io/dropify/'
+                ].join('\n');
+                const res = await request({
+                  hostname: 'api.callmebot.com',
+                  path: `/whatsapp.php?phone=${encodeURIComponent(cmbPhone)}&text=${encodeURIComponent(text)}&apikey=${encodeURIComponent(cmbKey)}`,
+                  method: 'GET'
+                });
+                if (res.status === 200) {
+                  console.log('WhatsApp-Benachrichtigung gesendet.');
+                } else {
+                  const info = String(typeof res.body === 'string' ? res.body : JSON.stringify(res.body)).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200);
+                  console.log(`WhatsApp-Benachrichtigung fehlgeschlagen (Status ${res.status}): ${info}`);
+                }
+              } catch (e) {
+                console.log('WhatsApp-Benachrichtigung fehlgeschlagen:', e.message);
+              }
+            } else {
+              console.log('Keine Benachrichtigung (keine neuen Releases oder CALLMEBOT_PHONE / CALLMEBOT_APIKEY nicht gesetzt).');
             }
           }
 
