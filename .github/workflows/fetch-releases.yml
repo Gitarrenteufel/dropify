@@ -195,7 +195,7 @@ jobs:
             for (const artist of artists) {
               const res = await request({
                 hostname: 'api.deezer.com',
-                path: `/artist/${artist.deezerId}/albums?limit=10`,
+                path: `/artist/${artist.deezerId}/albums?limit=20`,
                 method: 'GET'
               });
               if (!res.body.data) {
