@@ -6,12 +6,141 @@ on:
   workflow_dispatch:
 
 jobs:
-  fetch:
+  sync-and-fetch:
     runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Sync artist mapping from Spotify to Deezer
+        env:
+          SPOTIFY_CLIENT_ID: ${{ secrets.SPOTIFY_CLIENT_ID }}
+          SPOTIFY_CLIENT_SECRET: ${{ secrets.SPOTIFY_CLIENT_SECRET }}
+          SPOTIFY_REFRESH_TOKEN: ${{ secrets.SPOTIFY_REFRESH_TOKEN }}
+          EXCLUDED_ARTISTS: ${{ secrets.EXCLUDED_ARTISTS }}
+        run: |
+          node << 'EOF'
+          const https = require('https');
+          const fs = require('fs');
+
+          function request(options, body = null) {
+            return new Promise((resolve, reject) => {
+              const req = https.request(options, (res) => {
+                let data = '';
+                res.on('data', chunk => data += chunk);
+                res.on('end', () => {
+                  try { resolve({ status: res.statusCode, body: JSON.parse(data) }); }
+                  catch { resolve({ status: res.statusCode, body: data }); }
+                });
+              });
+              req.on('error', reject);
+              if (body) req.write(body);
+              req.end();
+            });
+          }
+
+          function sleep(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+          }
+
+          async function main() {
+            const excluded = (process.env.EXCLUDED_ARTISTS || '')
+              .split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+            console.log(`Ausgeschlossen: ${excluded.join(', ') || 'keine'}`);
+
+            // Spotify Token
+            const credentials = Buffer.from(
+              `${process.env.SPOTIFY_CLIENT_ID}:${process.env.SPOTIFY_CLIENT_SECRET}`
+            ).toString('base64');
+
+            const tokenRes = await request({
+              hostname: 'accounts.spotify.com',
+              path: '/api/token',
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'Authorization': `Basic ${credentials}`
+              }
+            }, `grant_type=refresh_token&refresh_token=${process.env.SPOTIFY_REFRESH_TOKEN}`);
+
+            const token = tokenRes.body.access_token;
+            if (!token) { console.error('Kein Token:', tokenRes.body); process.exit(1); }
+            console.log('Spotify Token erhalten.');
+
+            // Spotify Follow-Liste
+            let artists = [];
+            let url = '/v1/me/following?type=artist&limit=50';
+            while (url) {
+              const res = await request({
+                hostname: 'api.spotify.com',
+                path: url,
+                method: 'GET',
+                headers: { 'Authorization': `Bearer ${token}` }
+              });
+              if (!res.body.artists?.items) break;
+              artists = artists.concat(res.body.artists.items);
+              const next = res.body.artists.next;
+              url = next ? new URL(next).pathname + new URL(next).search : null;
+            }
+            console.log(`${artists.length} Künstler von Spotify geholt.`);
+
+            const filtered = artists.filter(a => !excluded.includes(a.name.toLowerCase()));
+            console.log(`${filtered.length} Künstler nach Ausschluss.`);
+
+            // Bestehende Mappings laden
+            let existing = {};
+            try {
+              const data = JSON.parse(fs.readFileSync('artists.json', 'utf8'));
+              data.forEach(a => { existing[a.spotifyName] = a; });
+              console.log(`${Object.keys(existing).length} bestehende Mappings geladen.`);
+            } catch { console.log('Kein bestehendes Mapping gefunden.'); }
+
+            // Deezer Mapping
+            const mapping = [];
+            for (const artist of filtered) {
+              if (existing[artist.name]) {
+                mapping.push(existing[artist.name]);
+                continue;
+              }
+              const query = encodeURIComponent(artist.name);
+              const res = await request({
+                hostname: 'api.deezer.com',
+                path: `/search/artist?q=${query}&strict=on&limit=5`,
+                method: 'GET'
+              });
+              if (!res.body.data || res.body.data.length === 0) {
+                console.log(`NICHT GEFUNDEN: ${artist.name}`);
+                mapping.push({ spotifyName: artist.name, deezerId: null, deezerName: null });
+                await sleep(200);
+                continue;
+              }
+              const nameLower = artist.name.toLowerCase();
+              const exact = res.body.data.filter(d => d.name.toLowerCase() === nameLower);
+              const candidates = exact.length > 0 ? exact : res.body.data;
+              const best = candidates.reduce((a, b) => a.nb_fan > b.nb_fan ? a : b);
+              console.log(`GEFUNDEN: ${artist.name} → ${best.name} (ID: ${best.id})`);
+              mapping.push({ spotifyName: artist.name, deezerId: best.id, deezerName: best.name });
+              await sleep(200);
+            }
+
+            fs.writeFileSync('artists.json', JSON.stringify(mapping, null, 2));
+            console.log(`${mapping.length} Künstler in artists.json gespeichert.`);
+          }
+
+          main().catch(err => { console.error(err); process.exit(1); });
+          EOF
+
+      - name: Commit artists.json
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add artists.json
+          git diff --staged --quiet || git commit -m "Update artist mapping"
+          git push
 
       - name: Fetch releases from Deezer and write to KV
         env:
@@ -53,12 +182,10 @@ jobs:
           }
 
           async function main() {
-            // 1. artists.json laden
             const artists = JSON.parse(fs.readFileSync('artists.json', 'utf8'))
               .filter(a => a.deezerId !== null);
             console.log(`${artists.length} Künstler mit Deezer-Mapping geladen.`);
 
-            // 2. Releases der letzten 7 Tage holen
             const sevenDaysAgo = new Date();
             sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
             sevenDaysAgo.setHours(0, 0, 0, 0);
@@ -71,13 +198,10 @@ jobs:
                 path: `/artist/${artist.deezerId}/albums?limit=10`,
                 method: 'GET'
               });
-
               if (!res.body.data) {
-                console.log(`Kein Data für ${artist.spotifyName}`);
                 await sleep(300);
                 continue;
               }
-
               for (const album of res.body.data) {
                 const releaseDate = new Date(album.release_date + 'T00:00:00Z');
                 if (releaseDate >= sevenDaysAgo) {
@@ -98,8 +222,7 @@ jobs:
             }
             console.log(`${newReleases.length} neue Releases gefunden.`);
 
-            // 3. Bestehende KV-Daten laden und mergen
-            console.log('Lade bestehende KV-Daten...');
+            // Bestehende KV-Daten laden
             let existingReleases = [];
             try {
               const existingRes = await request({
@@ -111,14 +234,11 @@ jobs:
               if (existingRes.status === 200 && Array.isArray(existingRes.body)) {
                 existingReleases = existingRes.body;
                 console.log(`${existingReleases.length} bestehende Releases geladen.`);
-              } else {
-                console.log(`KV leer (${existingRes.status}).`);
               }
             } catch (e) {
               console.log('KV-Lesen fehlgeschlagen:', e.message);
             }
 
-            // Merge
             const existingIds = new Set(existingReleases.map(r => r.id));
             const merged = [...existingReleases];
             for (const r of newReleases) {
@@ -127,7 +247,6 @@ jobs:
             merged.sort((a, b) => new Date(b.date) - new Date(a.date));
             console.log(`${merged.length} Releases gesamt nach Merge.`);
 
-            // 4. In KV schreiben
             const kvRes = await request({
               hostname: 'api.cloudflare.com',
               path: `/client/v4/accounts/${process.env.CF_ACCOUNT_ID}/storage/kv/namespaces/${process.env.CF_KV_NAMESPACE_ID}/values/all_releases`,
