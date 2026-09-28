@@ -147,7 +147,8 @@
       scope: 'playlist-modify-private',
       code_challenge_method: 'S256',
       code_challenge: challenge,
-      state: 'playlist'
+      state: 'playlist',
+      show_dialog: 'true'
     });
     window.location.href = 'https://accounts.spotify.com/authorize?' + params.toString();
   }
@@ -543,10 +544,10 @@
 
       document.getElementById('loading').style.display = 'none';
 
-      // OAuth Callback verarbeiten
-      await handleOAuthCallback();
-
       render();
+
+      // OAuth Callback verarbeiten (nach render)
+      await handleOAuthCallback();
       localStorage.setItem(LAST_SEEN_KEY, new Date().toISOString());
 
     } catch (e) {
@@ -558,10 +559,13 @@
     const params = new URLSearchParams(window.location.search);
     const code = params.get('code');
     const state = params.get('state');
-    if (!code || state !== 'playlist' || !spotifyClientId) return;
+    if (!code || !state || !state.startsWith('playlist') || !spotifyClientId) return;
 
     const verifier = localStorage.getItem(VERIFIER_KEY);
     if (!verifier) return;
+
+    // URL sofort säubern
+    window.history.replaceState({}, document.title, window.location.pathname);
 
     const res = await fetch('https://accounts.spotify.com/api/token', {
       method: 'POST',
@@ -579,11 +583,12 @@
       localStorage.setItem(TOKEN_KEY, data.access_token);
       localStorage.setItem(TOKEN_EXPIRY_KEY, String(Date.now() + data.expires_in * 1000));
       localStorage.removeItem(VERIFIER_KEY);
-      window.history.replaceState({}, document.title, window.location.pathname);
       if (localStorage.getItem('dropify_playlist_pending')) {
         localStorage.removeItem('dropify_playlist_pending');
-        setTimeout(createPlaylist, 300);
+        await createPlaylist();
       }
+    } else {
+      console.error('Token-Fehler:', data);
     }
   }
 
