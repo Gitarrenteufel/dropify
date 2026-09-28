@@ -22,6 +22,7 @@ jobs:
           SPOTIFY_CLIENT_SECRET: ${{ secrets.SPOTIFY_CLIENT_SECRET }}
           SPOTIFY_REFRESH_TOKEN: ${{ secrets.SPOTIFY_REFRESH_TOKEN }}
           EXCLUDED_ARTISTS: ${{ secrets.EXCLUDED_ARTISTS }}
+          GH_PAT: ${{ secrets.GH_PAT }}
         run: |
           node << 'EOF'
           const https = require('https');
@@ -70,6 +71,32 @@ jobs:
             const token = tokenRes.body.access_token;
             if (!token) { console.error('Kein Token:', tokenRes.body); process.exit(1); }
             console.log('Spotify Token erhalten.');
+
+            // Rotierten Refresh Token sofort als GitHub Secret sichern (v1.2)
+            let secretUpdateFailed = false;
+            const newRefresh = tokenRes.body.refresh_token;
+            if (newRefresh && newRefresh !== process.env.SPOTIFY_REFRESH_TOKEN) {
+              console.log(`::add-mask::${newRefresh}`);
+              if (!process.env.GH_PAT) {
+                secretUpdateFailed = true;
+                console.log('::error::Neuer Refresh Token erhalten, aber Secret GH_PAT fehlt - SPOTIFY_REFRESH_TOKEN nicht aktualisiert.');
+              } else {
+                try {
+                  require('child_process').execFileSync(
+                    'gh',
+                    ['secret', 'set', 'SPOTIFY_REFRESH_TOKEN', '--repo', process.env.GITHUB_REPOSITORY],
+                    { input: newRefresh, env: { ...process.env, GH_TOKEN: process.env.GH_PAT }, stdio: ['pipe', 'pipe', 'pipe'] }
+                  );
+                  console.log('Neuer Refresh Token als Secret gespeichert.');
+                } catch (e) {
+                  secretUpdateFailed = true;
+                  const msg = (e.stderr ? e.stderr.toString() : e.message).trim().replace(/\n/g, ' ');
+                  console.log(`::error::Refresh Token konnte nicht als Secret gespeichert werden: ${msg}`);
+                }
+              }
+            } else {
+              console.log('Refresh Token unverändert.');
+            }
 
             // Spotify Follow-Liste
             let artists = [];
@@ -129,12 +156,14 @@ jobs:
 
             fs.writeFileSync('artists.json', JSON.stringify(mapping, null, 2));
             console.log(`${mapping.length} Künstler in artists.json gespeichert.`);
+            if (secretUpdateFailed) process.exit(1);
           }
 
           main().catch(err => { console.error(err); process.exit(1); });
           EOF
 
       - name: Commit artists.json
+        if: ${{ !cancelled() }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -143,6 +172,7 @@ jobs:
           git push
 
       - name: Fetch releases from Deezer and write to KV
+        if: ${{ !cancelled() }}
         env:
           CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
           CF_KV_NAMESPACE_ID: ${{ secrets.CF_KV_NAMESPACE_ID }}
