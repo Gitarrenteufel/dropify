@@ -147,17 +147,25 @@
     return new Date(dateStr + 'T23:59:59Z') > new Date(lastSeen);
   }
 
+  function esc(str) {
+    return String(str ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  function safeUrl(url) {
+    return /^https?:\/\//i.test(url) ? url : '#';
+  }
+
   function releaseHTML(r, showDot = true) {
     const badgeClass = r.type === 'album' ? 'badge-album' : r.type === 'single' ? 'badge-single' : 'badge-ep';
     const badgeLabel = r.type === 'album' ? 'Album' : r.type === 'single' ? 'Single' : 'EP';
     const dot = showDot && isNew(r.date) ? '<div class="new-dot"></div>' : '';
     const fallback = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAAACXBIWXMAAAsTAAALEwEAmpwYAAAAyklEQVR4nO2YwQqDMBBEX6IH//8ji6ciop3dJA==';
     return `
-      <a class="release-item" href="${r.url}" target="_blank">
-        <img class="cover" src="${r.cover}" alt="${r.title}" loading="lazy" onerror="this.onerror=null;this.src='${fallback}'">
+      <a class="release-item" href="${esc(safeUrl(r.url))}" target="_blank">
+        <img class="cover" src="${esc(safeUrl(r.cover))}" alt="${esc(r.title)}" loading="lazy" onerror="this.onerror=null;this.src='${fallback}'">
         <div class="release-info">
-          <div class="release-artist">${r.artist}</div>
-          <div class="release-title">${r.title}</div>
+          <div class="release-artist">${esc(r.artist)}</div>
+          <div class="release-title">${esc(r.title)}</div>
           <div class="release-meta">
             <span class="badge ${badgeClass}">${badgeLabel}</span>
             <span class="release-date">${formatDate(r.date)}</span>
@@ -200,8 +208,6 @@
     const content = document.getElementById('content');
     const empty = document.getElementById('empty');
     const banner = document.getElementById('banner');
-    const playlistSection = document.getElementById('playlist-section');
-    const playlistBtn = document.getElementById('playlist-btn');
 
     const newReleases = filtered.filter(r => r.date >= currentFriday && r.date <= currentThursday);
     const upcomingReleases = filtered.filter(r => r.date > currentThursday).sort((a, b) => new Date(a.date) - new Date(b.date));
@@ -346,49 +352,10 @@
 
       render();
 
-      // OAuth Callback verarbeiten (nach render)
-      await handleOAuthCallback();
       localStorage.setItem(LAST_SEEN_KEY, new Date().toISOString());
 
     } catch (e) {
       document.getElementById('loading').textContent = 'Fehler beim Laden.';
-    }
-  }
-
-  async function handleOAuthCallback() {
-    const params = new URLSearchParams(window.location.search);
-    const code = params.get('code');
-    const state = params.get('state');
-    if (!code || !state || !state.startsWith('playlist') || !spotifyClientId) return;
-
-    const verifier = localStorage.getItem(VERIFIER_KEY);
-    if (!verifier) return;
-
-    // URL sofort säubern
-    window.history.replaceState({}, document.title, window.location.pathname);
-
-    const res = await fetch('https://accounts.spotify.com/api/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        client_id: spotifyClientId,
-        grant_type: 'authorization_code',
-        code,
-        redirect_uri: window.location.origin + window.location.pathname,
-        code_verifier: verifier
-      })
-    });
-    const data = await res.json();
-    if (data.access_token) {
-      localStorage.setItem(TOKEN_KEY, data.access_token);
-      localStorage.setItem(TOKEN_EXPIRY_KEY, String(Date.now() + data.expires_in * 1000));
-      localStorage.removeItem(VERIFIER_KEY);
-      if (localStorage.getItem('dropify_playlist_pending')) {
-        localStorage.removeItem('dropify_playlist_pending');
-        await createPlaylist();
-      }
-    } else {
-      console.error('Token-Fehler:', data);
     }
   }
 
