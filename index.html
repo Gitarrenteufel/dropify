@@ -145,7 +145,7 @@
   function isNew(dateStr) {
     const lastSeen = localStorage.getItem(LAST_SEEN_KEY);
     if (!lastSeen) return true;
-    return new Date(dateStr) > new Date(lastSeen);
+    return new Date(dateStr + 'T23:59:59Z') > new Date(lastSeen);
   }
 
   function releaseHTML(r, showDot = true) {
@@ -340,7 +340,7 @@
       const lastSeen = localStorage.getItem(LAST_SEEN_KEY);
       const newCount = allReleases.filter(r =>
         r.date >= currentFriday && r.date <= currentThursday &&
-        (!lastSeen || new Date(r.date) > new Date(lastSeen))
+        (!lastSeen || new Date(r.date + 'T23:59:59Z') > new Date(lastSeen))
       ).length;
 
       const banner = document.getElementById('banner');
