@@ -148,10 +148,10 @@
     return new Date(dateStr) > new Date(lastSeen);
   }
 
-  function releaseHTML(r) {
+  function releaseHTML(r, showDot = true) {
     const badgeClass = r.type === 'album' ? 'badge-album' : r.type === 'single' ? 'badge-single' : 'badge-ep';
     const badgeLabel = r.type === 'album' ? 'Album' : r.type === 'single' ? 'Single' : 'EP';
-    const dot = isNew(r.date) ? '<div class="new-dot"></div>' : '';
+    const dot = showDot && isNew(r.date) ? '<div class="new-dot"></div>' : '';
     return `
       <a class="release-item" href="${r.url}" target="_blank">
         <img class="cover" src="${r.cover}" alt="${r.title}" loading="lazy">
@@ -265,7 +265,7 @@
               </span>
             </div>
             <div class="archive-week-items ${openClass}" id="upcoming-${friday}">
-              ${weeks[friday].map(releaseHTML).join('')}
+              ${weeks[friday].map(r => releaseHTML(r, false)).join('')}
             </div>
           </div>`;
       });
@@ -358,6 +358,29 @@
       document.getElementById('loading').textContent = 'Fehler beim Laden.';
     }
   }
+
+
+  // Wischfunktion für Tab-Navigation
+  let touchStartX = 0;
+  let touchEndX = 0;
+  const tabs = ['new', 'upcoming', 'archive'];
+
+  document.addEventListener('touchstart', e => {
+    touchStartX = e.changedTouches[0].screenX;
+  }, { passive: true });
+
+  document.addEventListener('touchend', e => {
+    touchEndX = e.changedTouches[0].screenX;
+    const diff = touchStartX - touchEndX;
+    if (Math.abs(diff) > 50) {
+      const currentIndex = tabs.indexOf(currentTab);
+      if (diff > 0 && currentIndex < tabs.length - 1) {
+        setTab(tabs[currentIndex + 1]);
+      } else if (diff < 0 && currentIndex > 0) {
+        setTab(tabs[currentIndex - 1]);
+      }
+    }
+  }, { passive: true });
 
   loadReleases();
 </script>
