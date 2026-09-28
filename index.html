@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dropify</title>
+  <meta name="theme-color" content="#121212">
+  <link rel="manifest" href="manifest.json">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #121212; color: #fff; font-family: -apple-system, sans-serif; max-width: 600px; margin: 0 auto; }
+
+    header { background: #121212; padding: 16px; position: sticky; top: 0; z-index: 10; border-bottom: 1px solid #333; display: flex; justify-content: space-between; align-items: center; }
+    header h1 { font-size: 20px; font-weight: 700; color: #1db954; }
+    #last-updated { font-size: 11px; color: #666; }
+
+    .tabs { display: flex; background: #121212; position: sticky; top: 57px; z-index: 9; border-bottom: 1px solid #333; }
+    .tab { flex: 1; text-align: center; padding: 12px; font-size: 14px; font-weight: 600; color: #b3b3b3; cursor: pointer; border-bottom: 2px solid transparent; }
+    .tab.active { color: #fff; border-bottom-color: #1db954; }
+
+    .filters { padding: 10px 16px; display: flex; gap: 8px; background: #121212; position: sticky; top: 105px; z-index: 8; }
+    .filter-pill { font-size: 12px; padding: 4px 12px; border-radius: 20px; border: 1px solid #444; color: #b3b3b3; background: transparent; cursor: pointer; }
+    .filter-pill.active { background: #1db954; border-color: #1db954; color: #000; font-weight: 600; }
+
+    #banner { margin: 12px 16px; background: #1db954; border-radius: 8px; padding: 10px 14px; font-size: 13px; color: #000; font-weight: 600; display: none; }
+
+    #content { padding: 0 0 80px; }
+
+    .section-label { font-size: 11px; color: #b3b3b3; text-transform: uppercase; letter-spacing: 0.08em; padding: 12px 16px 6px; }
+
+    .archive-week { border-bottom: 1px solid #2a2a2a; }
+    .archive-week-header { padding: 12px 16px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
+    .archive-week-header:hover { background: #1a1a1a; }
+    .archive-week-title { font-size: 13px; font-weight: 600; color: #b3b3b3; }
+    .archive-week-count { font-size: 11px; color: #666; }
+    .archive-week-chevron { font-size: 12px; color: #666; transition: transform 0.2s; }
+    .archive-week-chevron.open { transform: rotate(180deg); }
+    .archive-week-items { display: none; }
+    .archive-week-items.open { display: block; }
+
+    .release-item { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid #222; cursor: pointer; text-decoration: none; color: inherit; }
+    .release-item:hover { background: #1a1a1a; }
+    .cover { width: 52px; height: 52px; border-radius: 4px; object-fit: cover; flex-shrink: 0; background: #333; }
+    .release-info { flex: 1; min-width: 0; }
+    .release-artist { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .release-title { font-size: 13px; color: #b3b3b3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+    .release-meta { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+    .badge { font-size: 10px; padding: 2px 6px; border-radius: 3px; font-weight: 600; }
+    .badge-album { background: #1a3a4a; color: #5bb3d0; }
+    .badge-single { background: #3a1a3a; color: #c070c0; }
+    .badge-ep { background: #3a3a1a; color: #c0b040; }
+    .release-date { font-size: 11px; color: #666; }
+    .new-dot { width: 7px; height: 7px; border-radius: 50%; background: #1db954; flex-shrink: 0; }
+
+    #loading { text-align: center; padding: 60px 16px; color: #666; }
+    #empty { text-align: center; padding: 60px 16px; color: #666; display: none; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Dropify</h1>
+  <span id="last-updated"></span>
+</header>
+
+<div class="tabs">
+  <div class="tab active" onclick="setTab('new')">Neu</div>
+  <div class="tab" onclick="setTab('archive')">Archiv</div>
+</div>
+
+<div class="filters">
+  <button class="filter-pill active" onclick="setFilter('all')">Alle</button>
+  <button class="filter-pill" onclick="setFilter('album')">Alben</button>
+  <button class="filter-pill" onclick="setFilter('single')">Singles</button>
+  <button class="filter-pill" onclick="setFilter('ep')">EPs</button>
+</div>
+
+<div id="banner"></div>
+<div id="loading">Releases werden geladen…</div>
+<div id="empty">Keine Releases vorhanden.</div>
+<div id="content"></div>
+
+<script>
+  const WORKER_URL = "https://dropify-worker.summer-truth-edd2.workers.dev/";
+  const LAST_SEEN_KEY = "dropify_last_seen";
+  const FILTER_KEY = "dropify_filter";
+  const TAB_KEY = "dropify_tab";
+
+  let allReleases = [];
+  let currentFilter = localStorage.getItem(FILTER_KEY) || "all";
+  let currentTab = localStorage.getItem(TAB_KEY) || "new";
+
+  // Filter-Pills initialisieren
+  document.querySelectorAll(".filter-pill").forEach(pill => {
+    const text = pill.textContent.toLowerCase();
+    const isActive = (currentFilter === "all" && text === "alle") || text === currentFilter;
+    pill.classList.toggle("active", isActive);
+  });
+
+  // Tab initialisieren
+  if (currentTab === "archive") {
+    document.querySelectorAll(".tab").forEach((t, i) => t.classList.toggle("active", i === 1));
+  }
+
+  // Gibt den Freitag der Release-Woche zurück
+  function getWeekFriday(dateStr) {
+    const date = new Date(dateStr + "T12:00:00Z");
+    const day = date.getUTCDay(); // 0=So, 5=Fr
+    const diff = (day >= 5) ? (day - 5) : (day + 2);
+    const friday = new Date(date);
+    friday.setUTCDate(date.getUTCDate() - diff);
+    return friday.toISOString().split('T')[0];
+  }
+
+  // Gibt den Donnerstag der selben Woche zurück
+  function getWeekThursday(fridayStr) {
+    const friday = new Date(fridayStr + "T12:00:00Z");
+    const thursday = new Date(friday);
+    thursday.setUTCDate(friday.getUTCDate() + 6);
+    return thursday.toISOString().split('T')[0];
+  }
+
+  // Aktuellen Freitag der laufenden Woche ermitteln
+  function getCurrentWeekFriday() {
+    const today = new Date();
+    const todayStr = today.toISOString().split('T')[0];
+    return getWeekFriday(todayStr);
+  }
+
+  function formatDateShort(dateStr) {
+    const date = new Date(dateStr + "T12:00:00Z");
+    return date.toLocaleDateString("de-DE", { day: "2-digit", month: "short", timeZone: "UTC" });
+  }
+
+  function formatDate(dateStr) {
+    const date = new Date(dateStr + "T12:00:00Z");
+    const today = new Date();
+    const todayStr = today.toISOString().split('T')[0];
+    if (dateStr === todayStr) return "heute";
+    const yesterdayDate = new Date(today);
+    yesterdayDate.setDate(today.getDate() - 1);
+    if (dateStr === yesterdayDate.toISOString().split('T')[0]) return "gestern";
+    return formatDateShort(dateStr);
+  }
+
+  function isNew(dateStr) {
+    const lastSeen = localStorage.getItem(LAST_SEEN_KEY);
+    if (!lastSeen) return true;
+    return new Date(dateStr) > new Date(lastSeen);
+  }
+
+  function releaseHTML(r) {
+    const badgeClass = r.type === "album" ? "badge-album" : r.type === "single" ? "badge-single" : "badge-ep";
+    const badgeLabel = r.type === "album" ? "Album" : r.type === "single" ? "Single" : "EP";
+    const dot = isNew(r.date) ? `<div class="new-dot"></div>` : "";
+    return `
+      <a class="release-item" href="${r.url}" target="_blank">
+        <img class="cover" src="${r.cover}" alt="${r.title}" loading="lazy">
+        <div class="release-info">
+          <div class="release-artist">${r.artist}</div>
+          <div class="release-title">${r.title}</div>
+          <div class="release-meta">
+            <span class="badge ${badgeClass}">${badgeLabel}</span>
+            <span class="release-date">${formatDate(r.date)}</span>
+          </div>
+        </div>
+        ${dot}
+      </a>`;
+  }
+
+  function setTab(tab) {
+    currentTab = tab;
+    localStorage.setItem(TAB_KEY, tab);
+    document.querySelectorAll(".tab").forEach((t, i) => {
+      t.classList.toggle("active", (tab === "new" && i === 0) || (tab === "archive" && i === 1));
+    });
+    render();
+  }
+
+  function setFilter(filter) {
+    currentFilter = filter;
+    localStorage.setItem(FILTER_KEY, filter);
+    document.querySelectorAll(".filter-pill").forEach(p => p.classList.remove("active"));
+    event.target.classList.add("active");
+    render();
+  }
+
+  function render() {
+    const filtered = currentFilter === "all"
+      ? allReleases
+      : allReleases.filter(r => r.type === currentFilter);
+
+    const content = document.getElementById("content");
+    const empty = document.getElementById("empty");
+    const banner = document.getElementById("banner");
+
+    if (currentTab === "new") {
+      banner.style.display = "block"; // Banner nur im Neu-Tab
+      const currentFriday = getCurrentWeekFriday();
+      const currentWeek = filtered.filter(r => (r.weekFriday || getWeekFriday(r.date)) === currentFriday);
+
+      if (currentWeek.length === 0) {
+        content.innerHTML = "";
+        empty.style.display = "block";
+        empty.textContent = "Keine neuen Releases diese Woche.";
+        return;
+      }
+      empty.style.display = "none";
+
+      // Gruppierung: Heute / Diese Woche
+      const today = new Date().toISOString().split('T')[0];
+      const todayItems = currentWeek.filter(r => r.date === today);
+      const weekItems = currentWeek.filter(r => r.date !== today);
+
+      let html = "";
+      if (todayItems.length > 0) {
+        html += `<div class="section-label">Heute</div>`;
+        todayItems.forEach(r => { html += releaseHTML(r); });
+      }
+      if (weekItems.length > 0) {
+        html += `<div class="section-label">Diese Woche</div>`;
+        weekItems.forEach(r => { html += releaseHTML(r); });
+      }
+      content.innerHTML = html;
+
+    } else {
+      // Archiv-Tab
+      banner.style.display = "none";
+      const currentFriday = getCurrentWeekFriday();
+      const archiveReleases = filtered.filter(r => (r.weekFriday || getWeekFriday(r.date)) !== currentFriday);
+
+      if (archiveReleases.length === 0) {
+        content.innerHTML = "";
+        empty.style.display = "block";
+        empty.textContent = "Noch keine archivierten Releases.";
+        return;
+      }
+      empty.style.display = "none";
+
+      // Nach Wochen gruppieren
+      const weeks = {};
+      archiveReleases.forEach(r => {
+        const friday = r.weekFriday || getWeekFriday(r.date);
+        if (!weeks[friday]) weeks[friday] = [];
+        weeks[friday].push(r);
+      });
+
+      const sortedFridays = Object.keys(weeks).sort((a, b) => new Date(b) - new Date(a));
+
+      let html = "";
+      sortedFridays.forEach((friday, idx) => {
+        const thursday = getWeekThursday(friday);
+        const label = `${formatDateShort(friday)} – ${formatDateShort(thursday)}`;
+        const count = weeks[friday].length;
+        const isFirst = idx === 0;
+        const openClass = isFirst ? "open" : "";
+
+        html += `
+          <div class="archive-week">
+            <div class="archive-week-header" onclick="toggleWeek('week-${friday}')">
+              <span class="archive-week-title">${label}</span>
+              <span style="display:flex;align-items:center;gap:8px">
+                <span class="archive-week-count">${count} Release${count !== 1 ? "s" : ""}</span>
+                <span class="archive-week-chevron ${openClass}" id="chevron-week-${friday}">▼</span>
+              </span>
+            </div>
+            <div class="archive-week-items ${openClass}" id="week-${friday}">
+              ${weeks[friday].map(releaseHTML).join("")}
+            </div>
+          </div>`;
+      });
+
+      content.innerHTML = html;
+    }
+  }
+
+  function toggleWeek(id) {
+    const items = document.getElementById(id);
+    const chevron = document.getElementById("chevron-" + id);
+    items.classList.toggle("open");
+    chevron.classList.toggle("open");
+  }
+
+  async function loadReleases() {
+    try {
+      const res = await fetch(WORKER_URL);
+      const data = await res.json();
+
+      allReleases = data.releases || [];
+
+      if (data.updated) {
+        const updated = new Date(data.updated);
+        document.getElementById("last-updated").textContent =
+          `Stand: ${updated.toLocaleDateString("de-DE", { day: "2-digit", month: "short" })}`;
+      }
+
+      // Banner: neue Releases seit letztem Besuch
+      const lastSeen = localStorage.getItem(LAST_SEEN_KEY);
+      const newCount = allReleases.filter(r => !lastSeen || new Date(r.date) > new Date(lastSeen)).length;
+      const banner = document.getElementById("banner");
+      if (newCount > 0) {
+        banner.textContent = `${newCount} neue Release${newCount > 1 ? "s" : ""} seit deinem letzten Besuch`;
+        banner.style.display = currentTab === "new" ? "block" : "none";
+      }
+
+      document.getElementById("loading").style.display = "none";
+      render();
+
+      localStorage.setItem(LAST_SEEN_KEY, new Date().toISOString());
+
+    } catch (e) {
+      document.getElementById("loading").textContent = "Fehler beim Laden.";
+    }
+  }
+
+  loadReleases();
+</script>
+</body>
+</html>
