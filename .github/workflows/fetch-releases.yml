@@ -231,6 +231,8 @@ jobs:
                 method: 'GET'
               });
               if (!res.body.data) {
+                const info = JSON.stringify(res.body).slice(0, 200);
+                console.log(`UEBERSPRUNGEN: ${artist.spotifyName} (deezerId ${artist.deezerId}) - Status ${res.status}, Antwort: ${info}`);
                 await sleep(300);
                 continue;
               }
