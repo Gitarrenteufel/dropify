@@ -1,4 +1,5 @@
 name: Fetch Releases
+# Workflow-Datei erneut committed am 2026-10-02, um den schedule-Trigger zu reaktivieren
 
 on:
   schedule:
