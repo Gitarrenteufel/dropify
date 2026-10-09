@@ -85,7 +85,7 @@
 <div id="content"></div>
 
 <script>
-  const APP_VERSION = "1.4";
+  const APP_VERSION = "1.5";
   const WORKER_URL = "https://dropify-worker.summer-truth-edd2.workers.dev/";
   const LAST_SEEN_KEY = "dropify_last_seen";
   const FILTER_KEY = "dropify_filter";
@@ -131,6 +131,12 @@
     const thursday = new Date(friday);
     thursday.setUTCDate(friday.getUTCDate() + 6);
     return thursday.toISOString().split('T')[0];
+  }
+
+  function getPreviousWeekFriday(fridayStr) {
+    const d = new Date(fridayStr + 'T12:00:00Z');
+    d.setUTCDate(d.getUTCDate() - 7);
+    return d.toISOString().split('T')[0];
   }
 
   function formatDateShort(dateStr) {
@@ -224,17 +230,21 @@
     const empty = document.getElementById('empty');
     const banner = document.getElementById('banner');
 
+    const previousFriday = getPreviousWeekFriday(currentFriday);
+    const previousThursday = getWeekThursday(previousFriday);
+
     const newReleases = filtered.filter(r => r.date >= currentFriday && r.date <= currentThursday);
+    const previousReleases = filtered.filter(r => r.date >= previousFriday && r.date <= previousThursday);
     const upcomingReleases = filtered.filter(r => r.date > currentThursday).sort((a, b) => new Date(a.date) - new Date(b.date));
-    const archiveReleases = filtered.filter(r => r.date < currentFriday);
+    const archiveReleases = filtered.filter(r => r.date < previousFriday);
 
     if (currentTab === 'new') {
       banner.style.display = 'block';
 
-      if (newReleases.length === 0) {
+      if (newReleases.length === 0 && previousReleases.length === 0) {
         content.innerHTML = '';
         empty.style.display = 'block';
-        empty.textContent = 'Keine neuen Releases diese Woche.';
+        empty.textContent = 'Keine neuen Releases in den letzten zwei Wochen.';
         return;
       }
       empty.style.display = 'none';
@@ -249,6 +259,27 @@
       if (weekItems.length > 0) {
         html += '<div class="section-label">Diese Woche</div>';
         weekItems.forEach(r => { html += releaseHTML(r); });
+      }
+      if (newReleases.length === 0) {
+        html += '<div class="section-label">Diese Woche</div>';
+        html += '<div style="padding:8px 16px 16px;color:#777;font-size:14px;">Noch nichts erschienen.</div>';
+      }
+      if (previousReleases.length > 0) {
+        const label = `Vorwoche · ${formatDateShort(previousFriday)} – ${formatDateShort(previousThursday)}`;
+        const count = previousReleases.length;
+        html += `
+          <div class="archive-week">
+            <div class="archive-week-header" onclick="toggleWeek('previous-${previousFriday}')">
+              <span class="archive-week-title">${label}</span>
+              <span style="display:flex;align-items:center;gap:8px">
+                <span class="archive-week-count">${count} Release${count !== 1 ? 's' : ''}</span>
+                <span class="archive-week-chevron open" id="chevron-previous-${previousFriday}">▼</span>
+              </span>
+            </div>
+            <div class="archive-week-items open" id="previous-${previousFriday}">
+              ${previousReleases.map(r => releaseHTML(r)).join('')}
+            </div>
+          </div>`;
       }
       content.innerHTML = html;
 
@@ -351,9 +382,10 @@
 
       const currentFriday = getCurrentWeekFriday();
       const currentThursday = getWeekThursday(currentFriday);
+      const previousFriday = getPreviousWeekFriday(currentFriday);
       const lastSeen = localStorage.getItem(LAST_SEEN_KEY);
       const newCount = allReleases.filter(r =>
-        r.date >= currentFriday && r.date <= currentThursday &&
+        r.date >= previousFriday && r.date <= currentThursday &&
         (!lastSeen || new Date(r.date + 'T23:59:59Z') > new Date(lastSeen))
       ).length;
 
