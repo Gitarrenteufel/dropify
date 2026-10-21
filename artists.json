@@ -1,5 +1,10 @@
 [
   {
+    "spotifyName": "Machine Head",
+    "deezerId": 536,
+    "deezerName": "Machine Head"
+  },
+  {
     "spotifyName": "DOWN",
     "deezerId": 7274,
     "deezerName": "DOWN"
@@ -368,11 +373,6 @@
     "spotifyName": "Chimaira",
     "deezerId": 2998,
     "deezerName": "Chimaira"
-  },
-  {
-    "spotifyName": "Machine Head",
-    "deezerId": 536,
-    "deezerName": "Machine Head"
   },
   {
     "spotifyName": "Opeth",
