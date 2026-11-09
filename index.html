@@ -16,7 +16,7 @@
     #last-updated { font-size: 11px; color: #666; }
 
     .tabs { display: flex; background: #121212; position: sticky; top: 57px; z-index: 9; border-bottom: 1px solid #333; }
-    .tab { flex: 1; text-align: center; padding: 12px; font-size: 14px; font-weight: 600; color: #b3b3b3; cursor: pointer; border-bottom: 2px solid transparent; }
+    .tab { flex: 1; text-align: center; padding: 12px 4px; white-space: nowrap; font-size: 14px; font-weight: 600; color: #b3b3b3; cursor: pointer; border-bottom: 2px solid transparent; }
     .tab.active { color: #fff; border-bottom-color: #1db954; }
 
     .filters { padding: 10px 16px; display: flex; gap: 8px; background: #121212; position: sticky; top: 105px; z-index: 8; }
@@ -54,6 +54,9 @@
     .release-date { font-size: 11px; color: #666; }
     .new-dot { width: 7px; height: 7px; border-radius: 50%; background: #1db954; flex-shrink: 0; }
 
+    .fav-btn { background: none; border: none; color: #666; font-size: 24px; line-height: 1; padding: 8px; margin: -8px -8px -8px 0; cursor: pointer; flex-shrink: 0; -webkit-tap-highlight-color: transparent; }
+    .fav-btn.active { color: #1db954; }
+
     #loading { text-align: center; padding: 60px 16px; color: #666; }
     #empty { text-align: center; padding: 60px 16px; color: #666; display: none; }
   </style>
@@ -66,9 +69,10 @@
 </header>
 
 <div class="tabs">
-  <div class="tab active" onclick="setTab('new')">Neu</div>
-  <div class="tab" onclick="setTab('upcoming')">Kommend</div>
-  <div class="tab" onclick="setTab('archive')">Archiv</div>
+  <div class="tab active" data-tab="new" onclick="setTab('new')">Neu</div>
+  <div class="tab" data-tab="upcoming" onclick="setTab('upcoming')">Kommend</div>
+  <div class="tab" data-tab="archive" onclick="setTab('archive')">Archiv</div>
+  <div class="tab" data-tab="favorites" onclick="setTab('favorites')">★ Favoriten</div>
 </div>
 
 <div class="filters">
@@ -85,14 +89,31 @@
 <div id="content"></div>
 
 <script>
-  const APP_VERSION = "1.6";
+  const APP_VERSION = "1.7";
   const WORKER_URL = "https://dropify-worker.summer-truth-edd2.workers.dev/";
   const LAST_SEEN_KEY = "dropify_last_seen";
   const FILTER_KEY = "dropify_filter";
   const TAB_KEY = "dropify_tab";
+  const FAV_KEY = "dropify_favorites";
+  const TAB_ORDER = ['new', 'upcoming', 'archive', 'favorites'];
   let allReleases = [];
   let currentFilter = localStorage.getItem(FILTER_KEY) || "all";
   let currentTab = localStorage.getItem(TAB_KEY) || "new";
+  if (!TAB_ORDER.includes(currentTab)) currentTab = "new";
+
+  // Favoriten: { key: Release-Kopie }
+  function loadFavs() {
+    try {
+      const f = JSON.parse(localStorage.getItem(FAV_KEY) || '{}');
+      return (f && typeof f === 'object' && !Array.isArray(f)) ? f : {};
+    } catch (e) { return {}; }
+  }
+  let favorites = loadFavs();
+  function saveFavs() {
+    try { localStorage.setItem(FAV_KEY, JSON.stringify(favorites)); } catch (e) {}
+  }
+  function favKey(r) { return String(r.id ?? r.url); }
+  function isFav(r) { return Object.prototype.hasOwnProperty.call(favorites, favKey(r)); }
 
   // Filter-Pills initialisieren
   document.querySelectorAll(".filter-pill").forEach(pill => {
@@ -100,12 +121,8 @@
   });
 
   // Tab initialisieren
-  document.querySelectorAll(".tab").forEach((t, i) => {
-    t.classList.toggle("active",
-      (currentTab === "new" && i === 0) ||
-      (currentTab === "upcoming" && i === 1) ||
-      (currentTab === "archive" && i === 2)
-    );
+  document.querySelectorAll(".tab").forEach(t => {
+    t.classList.toggle("active", t.dataset.tab === currentTab);
   });
 
   // Lokales Datum (nicht UTC) als YYYY-MM-DD
@@ -189,6 +206,7 @@
       compilation: ['badge-other', 'Compilation']
     };
     const [badgeClass, badgeLabel] = BADGES[r.type] || ['badge-other', r.type ? r.type.charAt(0).toUpperCase() + r.type.slice(1) : 'Release'];
+    const fav = isFav(r);
     const dot = showDot && isNew(r.date) ? '<div class="new-dot"></div>' : '';
     const fallback = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAAACXBIWXMAAAsTAAALEwEAmpwYAAAAyklEQVR4nO2YwQqDMBBEX6IH//8ji6ciop3dJA==';
     return `
@@ -203,18 +221,40 @@
           </div>
         </div>
         ${dot}
+        <button class="fav-btn ${fav ? 'active' : ''}" data-key="${esc(favKey(r))}" aria-label="Favorit" onclick="toggleFav(event)">${fav ? '★' : '☆'}</button>
       </a>`;
+  }
+
+  function toggleFav(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    const key = e.currentTarget.dataset.key;
+    if (Object.prototype.hasOwnProperty.call(favorites, key)) {
+      delete favorites[key];
+    } else {
+      const r = allReleases.find(x => favKey(x) === key);
+      if (!r) return;
+      favorites[key] = r;
+    }
+    saveFavs();
+    if (currentTab === 'favorites') {
+      render();
+    } else {
+      const on = Object.prototype.hasOwnProperty.call(favorites, key);
+      document.querySelectorAll('.fav-btn').forEach(b => {
+        if (b.dataset.key === key) {
+          b.classList.toggle('active', on);
+          b.textContent = on ? '★' : '☆';
+        }
+      });
+    }
   }
 
   function setTab(tab) {
     currentTab = tab;
     localStorage.setItem(TAB_KEY, tab);
-    document.querySelectorAll('.tab').forEach((t, i) => {
-      t.classList.toggle('active',
-        (tab === 'new' && i === 0) ||
-        (tab === 'upcoming' && i === 1) ||
-        (tab === 'archive' && i === 2)
-      );
+    document.querySelectorAll('.tab').forEach(t => {
+      t.classList.toggle('active', t.dataset.tab === tab);
     });
     render();
   }
@@ -333,6 +373,35 @@
       });
       content.innerHTML = html;
 
+    } else if (currentTab === 'favorites') {
+      banner.style.display = 'none';
+      const favList = Object.values(favorites).filter(r => {
+        if (currentFilter === 'all') return true;
+        if (currentFilter === 'compile') return r.type === 'compile' || r.type === 'compilation';
+        return r.type === currentFilter;
+      }).sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+      if (favList.length === 0) {
+        content.innerHTML = '';
+        empty.style.display = 'block';
+        empty.textContent = Object.keys(favorites).length === 0
+          ? 'Noch keine Favoriten. Tippe bei einem Release auf ☆.'
+          : 'Keine Favoriten in dieser Kategorie.';
+        return;
+      }
+      empty.style.display = 'none';
+      const years = {};
+      favList.forEach(r => {
+        const y = String(r.date).slice(0, 4);
+        if (!years[y]) years[y] = [];
+        years[y].push(r);
+      });
+      let html = '';
+      Object.keys(years).sort((a, b) => b.localeCompare(a)).forEach(y => {
+        html += `<div class="section-label">${esc(y)} · ${years[y].length}</div>`;
+        years[y].forEach(r => { html += releaseHTML(r, false); });
+      });
+      content.innerHTML = html;
+
     } else {
       banner.style.display = 'none';
       if (archiveReleases.length === 0) {
@@ -386,6 +455,17 @@
       const data = await res.json();
 
       allReleases = data.releases || [];
+
+      // Favoriten-Kopien mit frischen Daten aktualisieren (z. B. geändertes Datum)
+      let favChanged = false;
+      allReleases.forEach(r => {
+        const k = favKey(r);
+        if (Object.prototype.hasOwnProperty.call(favorites, k) && JSON.stringify(favorites[k]) !== JSON.stringify(r)) {
+          favorites[k] = r;
+          favChanged = true;
+        }
+      });
+      if (favChanged) saveFavs();
       if (data.updated) {
         const updated = new Date(data.updated);
         document.getElementById('last-updated').textContent =
@@ -420,7 +500,7 @@
 
   // Wischfunktion
   let touchStartX = 0;
-  const tabOrder = ['new', 'upcoming', 'archive'];
+  const tabOrder = TAB_ORDER;
   document.addEventListener('touchstart', e => { touchStartX = e.changedTouches[0].screenX; }, { passive: true });
   document.addEventListener('touchend', e => {
     const diff = touchStartX - e.changedTouches[0].screenX;
