@@ -275,19 +275,46 @@ jobs:
             }
 
             // Frische Deezer-Daten überschreiben bestehende Einträge (Datum, Cover, Typ etc.)
+            // Heutiges Datum in deutscher Zeit (YYYY-MM-DD)
+            const todayBerlin = new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Berlin' });
+
+            // Alt-Einträge ohne Meldestatus (aus Versionen vor v1.8) gelten als bereits gemeldet
+            for (const r of existingReleases) {
+              if (!('notified' in r)) r.notified = r.date > todayBerlin ? 'upcoming' : 'released';
+            }
+
             const byId = new Map(existingReleases.map(r => [r.id, r]));
+            const stripNotified = ({ notified, ...rest }) => rest;
             let updated = 0, added = 0;
-            const addedList = [];
             for (const r of newReleases) {
-              if (byId.has(r.id)) {
-                if (JSON.stringify(byId.get(r.id)) !== JSON.stringify(r)) updated++;
+              const old = byId.get(r.id);
+              if (old) {
+                if (JSON.stringify(stripNotified(old)) !== JSON.stringify(r)) updated++;
+                byId.set(r.id, { ...r, notified: old.notified });
               } else {
                 added++;
-                addedList.push(r);
+                byId.set(r.id, { ...r, notified: null });
               }
-              byId.set(r.id, r);
             }
             console.log(`${added} neu hinzugefügt, ${updated} aktualisiert.`);
+
+            // Meldungen bestimmen (v1.8): Kommend einmalig bei Erstfund, Neu bei Veröffentlichung
+            const notifyNew = [];
+            const notifyUpcoming = [];
+            for (const r of byId.values()) {
+              if (r.notified === 'released') continue;
+              if (r.date > todayBerlin) {
+                if (r.notified !== 'upcoming') {
+                  notifyUpcoming.push(r);
+                  r.notified = 'upcoming';
+                }
+              } else {
+                notifyNew.push(r);
+                r.notified = 'released';
+              }
+            }
+            notifyNew.sort((a, b) => b.date.localeCompare(a.date));
+            notifyUpcoming.sort((a, b) => a.date.localeCompare(b.date));
             const merged = [...byId.values()];
             merged.sort((a, b) => new Date(b.date) - new Date(a.date));
             console.log(`${merged.length} Releases gesamt nach Merge.`);
@@ -319,29 +346,40 @@ jobs:
               process.exit(1);
             }
 
-            // WhatsApp-Benachrichtigung via CallMeBot (v1.3)
+            // WhatsApp-Benachrichtigung via CallMeBot (v1.3, getrennt nach Neu/Kommend ab v1.8)
             const cmbPhone = process.env.CALLMEBOT_PHONE;
             const cmbKey = process.env.CALLMEBOT_APIKEY;
-            if (addedList.length > 0 && cmbPhone && cmbKey) {
+            if ((notifyNew.length > 0 || notifyUpcoming.length > 0) && cmbPhone && cmbKey) {
               try {
-                const n = addedList.length;
                 const maxLines = 8;
-                const lines = addedList.slice(0, maxLines).map(r => `${r.artist} - ${r.title}`);
-                if (n > maxLines) lines.push(`... und ${n - maxLines} weitere`);
-                const text = [
-                  `Dropify: ${n} ${n === 1 ? 'neuer Release' : 'neue Releases'}`,
-                  '',
-                  ...lines,
-                  '',
-                  'https://gitarrenteufel.github.io/dropify/'
-                ].join('\n');
+                const shortDate = d => `${d.slice(8, 10)}.${d.slice(5, 7)}.`;
+                const block = (list, withDate) => {
+                  const lines = list.slice(0, maxLines).map(r =>
+                    `• ${r.artist} - ${r.title}${withDate ? ` (${shortDate(r.date)})` : ''}`);
+                  if (list.length > maxLines) lines.push(`... und ${list.length - maxLines} weitere`);
+                  return lines;
+                };
+                const parts = [];
+                const nn = notifyNew.length;
+                const nu = notifyUpcoming.length;
+                if (nn > 0) {
+                  parts.push([`Dropify: ${nn} ${nn === 1 ? 'neuer Release' : 'neue Releases'}`, ...block(notifyNew, false)].join('\n'));
+                }
+                if (nu > 0) {
+                  const head = nn > 0
+                    ? `Kommend: ${nu}`
+                    : `Dropify: ${nu} ${nu === 1 ? 'kommender Release' : 'kommende Releases'}`;
+                  parts.push([head, ...block(notifyUpcoming, true)].join('\n'));
+                }
+                parts.push('https://gitarrenteufel.github.io/dropify/');
+                const text = parts.join('\n\n');
                 const res = await request({
                   hostname: 'api.callmebot.com',
                   path: `/whatsapp.php?phone=${encodeURIComponent(cmbPhone)}&text=${encodeURIComponent(text)}&apikey=${encodeURIComponent(cmbKey)}`,
                   method: 'GET'
                 });
                 if (res.status === 200) {
-                  console.log('WhatsApp-Benachrichtigung gesendet.');
+                  console.log(`WhatsApp-Benachrichtigung gesendet (${nn} neu, ${nu} kommend).`);
                 } else {
                   const info = String(typeof res.body === 'string' ? res.body : JSON.stringify(res.body)).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200);
                   console.log(`WhatsApp-Benachrichtigung fehlgeschlagen (Status ${res.status}): ${info}`);
@@ -350,7 +388,7 @@ jobs:
                 console.log('WhatsApp-Benachrichtigung fehlgeschlagen:', e.message);
               }
             } else {
-              console.log('Keine Benachrichtigung (keine neuen Releases oder CALLMEBOT_PHONE / CALLMEBOT_APIKEY nicht gesetzt).');
+              console.log('Keine Benachrichtigung (nichts Neues/Kommendes oder CALLMEBOT_PHONE / CALLMEBOT_APIKEY nicht gesetzt).');
             }
           }
 
