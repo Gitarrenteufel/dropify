@@ -1,5 +1,10 @@
 [
   {
+    "spotifyName": "Bruce Springsteen",
+    "deezerId": 4762,
+    "deezerName": "Bruce Springsteen"
+  },
+  {
     "spotifyName": "Machine Head",
     "deezerId": 536,
     "deezerName": "Machine Head"
@@ -60,6 +65,11 @@
     "deezerName": "Fear Factory"
   },
   {
+    "spotifyName": "Tim & Struppi",
+    "deezerId": 54606152,
+    "deezerName": "Tim & Struppi"
+  },
+  {
     "spotifyName": "TOOL",
     "deezerId": 689,
     "deezerName": "TOOL"
@@ -88,6 +98,11 @@
     "spotifyName": "SKULLHAMMER",
     "deezerId": 353992252,
     "deezerName": "SKULLHAMMER"
+  },
+  {
+    "spotifyName": "Dark Holmes",
+    "deezerId": 187134197,
+    "deezerName": "Dark Holmes"
   },
   {
     "spotifyName": "Moses Pelham",
@@ -263,11 +278,6 @@
     "spotifyName": "Monolord",
     "deezerId": 5623523,
     "deezerName": "Monolord"
-  },
-  {
-    "spotifyName": "Bruce Springsteen",
-    "deezerId": 4762,
-    "deezerName": "Bruce Springsteen"
   },
   {
     "spotifyName": "Biohazard",
@@ -1005,6 +1015,11 @@
     "deezerName": "Neil Diamond"
   },
   {
+    "spotifyName": "Asterix",
+    "deezerId": 64859,
+    "deezerName": "Asterix"
+  },
+  {
     "spotifyName": "Gruselserie",
     "deezerId": 1577602,
     "deezerName": "Gruselserie"
@@ -1015,14 +1030,29 @@
     "deezerName": "Seishi Yokomizo"
   },
   {
+    "spotifyName": "Jan Tenner",
+    "deezerId": 1034308,
+    "deezerName": "Jan Tenner"
+  },
+  {
     "spotifyName": "Die Originale",
     "deezerId": 1527721,
     "deezerName": "Die Originale"
   },
   {
+    "spotifyName": "John Sinclair",
+    "deezerId": 197655,
+    "deezerName": "John Sinclair"
+  },
+  {
     "spotifyName": "Torsten Sträter",
     "deezerId": 5166278,
     "deezerName": "Torsten Sträter"
+  },
+  {
+    "spotifyName": "Die drei ???",
+    "deezerId": 71513,
+    "deezerName": "Die drei ???"
   },
   {
     "spotifyName": "Lucas Vogelsang",
