@@ -353,9 +353,12 @@ jobs:
               try {
                 const maxLines = 8;
                 const shortDate = d => `${d.slice(8, 10)}.${d.slice(5, 7)}.`;
+                const TYPE_LABELS = { album: 'Album', single: 'Single', ep: 'EP', compile: 'Compilation', compilation: 'Compilation' };
                 const block = (list, withDate) => {
-                  const lines = list.slice(0, maxLines).map(r =>
-                    `• ${r.artist} - ${r.title}${withDate ? ` (${shortDate(r.date)})` : ''}`);
+                  const lines = list.slice(0, maxLines).map(r => {
+                    const info = [TYPE_LABELS[r.type], withDate ? shortDate(r.date) : null].filter(Boolean).join(', ');
+                    return `• ${r.artist} - ${r.title}${info ? ` (${info})` : ''}`;
+                  });
                   if (list.length > maxLines) lines.push(`... und ${list.length - maxLines} weitere`);
                   return lines;
                 };
