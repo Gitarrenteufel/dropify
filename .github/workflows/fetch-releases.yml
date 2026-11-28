@@ -245,7 +245,7 @@ jobs:
                     id: String(album.id),
                     artist: artist.spotifyName,
                     title: album.title,
-                    type: album.record_type,
+                    type: (album.record_type === 'compile' || album.record_type === 'compilation') ? 'album' : album.record_type,  // Compilations zählen als Album (v1.8)
                     date: album.release_date,
                     weekFriday: getWeekFriday(album.release_date),
                     cover: album.cover_medium,
@@ -353,7 +353,7 @@ jobs:
               try {
                 const maxLines = 8;
                 const shortDate = d => `${d.slice(8, 10)}.${d.slice(5, 7)}.`;
-                const TYPE_LABELS = { album: 'Album', single: 'Single', ep: 'EP', compile: 'Compilation', compilation: 'Compilation' };
+                const TYPE_LABELS = { album: 'Album', single: 'Single', ep: 'EP', compile: 'Album', compilation: 'Album' };
                 const block = (list, withDate) => {
                   const lines = list.slice(0, maxLines).map(r => {
                     const info = [TYPE_LABELS[r.type], withDate ? shortDate(r.date) : null].filter(Boolean).join(', ');
