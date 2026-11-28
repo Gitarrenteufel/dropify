@@ -80,7 +80,6 @@
   <button class="filter-pill" data-filter="album" onclick="setFilter('album', this)">Alben</button>
   <button class="filter-pill" data-filter="single" onclick="setFilter('single', this)">Singles</button>
   <button class="filter-pill" data-filter="ep" onclick="setFilter('ep', this)">EPs</button>
-  <button class="filter-pill" data-filter="compile" onclick="setFilter('compile', this)">Compilations</button>
 </div>
 
 <div id="banner"></div>
@@ -89,7 +88,7 @@
 <div id="content"></div>
 
 <script>
-  const APP_VERSION = "1.7.1";
+  const APP_VERSION = "1.8";
   const WORKER_URL = "https://dropify-worker.summer-truth-edd2.workers.dev/";
   const LAST_SEEN_KEY = "dropify_last_seen";
   const FILTER_KEY = "dropify_filter";
@@ -97,7 +96,14 @@
   const FAV_KEY = "dropify_favorites";
   const TAB_ORDER = ['new', 'upcoming', 'archive', 'favorites'];
   let allReleases = [];
+  const VALID_FILTERS = ['all', 'album', 'single', 'ep'];
   let currentFilter = localStorage.getItem(FILTER_KEY) || "all";
+  if (!VALID_FILTERS.includes(currentFilter)) currentFilter = "all";  // z. B. früher gespeicherter Filter "Compilations"
+
+  // Compilations werden wie Alben behandelt (ab v1.8)
+  function normType(t) {
+    return (t === 'compile' || t === 'compilation') ? 'album' : t;
+  }
   let currentTab = localStorage.getItem(TAB_KEY) || "new";
   if (!TAB_ORDER.includes(currentTab)) currentTab = "new";
 
@@ -201,11 +207,10 @@
     const BADGES = {
       album: ['badge-album', 'Album'],
       single: ['badge-single', 'Single'],
-      ep: ['badge-ep', 'EP'],
-      compile: ['badge-other', 'Compilation'],
-      compilation: ['badge-other', 'Compilation']
+      ep: ['badge-ep', 'EP']
     };
-    const [badgeClass, badgeLabel] = BADGES[r.type] || ['badge-other', r.type ? r.type.charAt(0).toUpperCase() + r.type.slice(1) : 'Release'];
+    const t = normType(r.type);
+    const [badgeClass, badgeLabel] = BADGES[t] || ['badge-other', t ? t.charAt(0).toUpperCase() + t.slice(1) : 'Release'];
     const fav = isFav(r);
     const dot = showDot && isNew(r.date) ? '<div class="new-dot"></div>' : '';
     const fallback = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAAACXBIWXMAAAsTAAALEwEAmpwYAAAAyklEQVR4nO2YwQqDMBBEX6IH//8ji6ciop3dJA==';
@@ -274,9 +279,7 @@
 
     const filtered = currentFilter === 'all'
       ? allReleases
-      : currentFilter === 'compile'
-        ? allReleases.filter(r => r.type === 'compile' || r.type === 'compilation')
-        : allReleases.filter(r => r.type === currentFilter);
+      : allReleases.filter(r => normType(r.type) === currentFilter);
 
     const content = document.getElementById('content');
     const empty = document.getElementById('empty');
@@ -377,8 +380,7 @@
       banner.style.display = 'none';
       const favList = Object.values(favorites).filter(r => {
         if (currentFilter === 'all') return true;
-        if (currentFilter === 'compile') return r.type === 'compile' || r.type === 'compilation';
-        return r.type === currentFilter;
+        return normType(r.type) === currentFilter;
       }).sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
       if (favList.length === 0) {
         content.innerHTML = '';
